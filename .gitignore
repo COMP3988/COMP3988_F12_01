@@ -1,0 +1,13 @@
+# general
+.venv/
+.DS_Store
+__pycache__
+
+# ai
+wandb
+checkpoints
+out.mha
+
+# training data
+synthRAD2025_Task1_Train/
+synthRAD2025_Task2_Train/
