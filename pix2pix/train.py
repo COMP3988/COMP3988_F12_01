@@ -234,7 +234,7 @@ def train_mri_to_ct():
     ])
     
     # load dataset - using small samples for quick demo
-    root_dir = "../Dataset/images"
+    root_dir = "Dataset/images"
     train_data = PairedData(root_dir=root_dir, transform=transform, mode='train', max_samples=20)
     test_data = PairedData(root_dir=root_dir, transform=transform, mode='test', max_samples=10)
     
@@ -371,8 +371,8 @@ def save_mri_to_ct_results(mri_images, real_ct, fake_ct, epoch):
 
 if __name__ == "__main__":
     # check if dataset exists
-    if not os.path.exists("../Dataset/images"):
-        print("Error: Dataset not found at ../Dataset/images")
+    if not os.path.exists("Dataset/images"):
+        print("Error: Dataset not found at Dataset/images")
         print("Please make sure the dataset is in the correct location")
         exit(1)
     
