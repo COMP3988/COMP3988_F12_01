@@ -1,0 +1,9 @@
+name: Subtask
+description: Smaller technical task
+title: "Subtask: "
+labels: ["subtask"]
+body:
+  - type: textarea
+    attributes:
+      label: Task
+      description: Describe the subtask.
