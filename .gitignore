@@ -1,8 +1,42 @@
-# general
-.venv/
+# Large datasets
+MRI-CT-Dataset/
+pytorch-CycleGAN-and-pix2pix/MRI-CT-Dataset/
+
+# Model checkpoints and results (too large for git)
+checkpoints/
+pytorch-CycleGAN-and-pix2pix/checkpoints/
+results/
+pytorch-CycleGAN-and-pix2pix/results/
+
+# Training data
+small_sample/
+pytorch-CycleGAN-and-pix2pix/small_sample/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
 venv/
+env/
+.venv/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
 .DS_Store
-__pycache__
+Thumbs.db
+
+# Logs
+*.log
+logs/
 
 # ai
 wandb
