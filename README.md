@@ -131,3 +131,21 @@ This project was developed for **COMP3988 - Software Development Project** at th
 ---
 
 *For detailed technical documentation, see the group report and individual reports in the project repository.*
+
+### Viewing .mha files
+
+There are many tools to view .mha files
+
+A simple lightweight one is `napari`
+
+Install the cli
+
+```bash
+pip install "napari[all]"
+```
+
+Then to view
+
+```bash
+napari <mha-filename>
+```
