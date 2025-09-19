@@ -1,13 +1,18 @@
 # general
 .venv/
+venv/
 .DS_Store
 __pycache__
 
 # ai
 wandb
 checkpoints
-out.mha
+
+# mri volumes and model weights
+*.mha
+*.pth
 
 # training data
+*.zip
 synthRAD2025_Task1_Train/
 synthRAD2025_Task2_Train/
