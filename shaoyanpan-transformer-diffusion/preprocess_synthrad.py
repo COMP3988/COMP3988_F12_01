@@ -107,9 +107,9 @@ if __name__ == "__main__":
                         help="Path to SynthRAD dataset root (with imagesTr/, labelsTr/)")
     parser.add_argument("--out_dir", default="SynthRAD",
                         help="Output directory for .mat files")
-    parser.add_argument("--seed", default="42",
+    parser.add_argument("--seed", default="42", type=int,
                         help="Seed for how patients are randomly divided into training, validation, and testing sets")
-    parser.add_argument("--proportion", default="1",
+    parser.add_argument("--proportion", default="1", type=float,
                         help="What proportion of total SynthRAD set to preprocess")
     args = parser.parse_args()
 
