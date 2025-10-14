@@ -1,2 +1,3 @@
 # this model uses data preprocessed as matlab arrays
 *.mat
+*.npz
