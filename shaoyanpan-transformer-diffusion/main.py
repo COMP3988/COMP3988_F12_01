@@ -117,9 +117,6 @@ from diffusion.resampler import *
 
 # # Build the data loader using the monai library
 
-# In[ ]:
-
-
 # Here are the dataloader hyper-parameters, including the batch size,
 # image size, image spacing (don't forget to adjust the spacing to your desired number)
 BATCH_SIZE_TRAIN = 4*1
@@ -132,95 +129,67 @@ metric = torch.nn.L1Loss()
 
 # # Data processing for mat files (contain {'image', 'label'}) (for nii files, in the next block)
 
-# In[ ]:
-
-
 # Here we use pre-processed matlab file, which has already normalized to -1 to 1, with same spacing, same orientations.
 # The reason we do that is because it can save us time to processing the data on the fly. If you don't like it,
 # we provide the standard processing pipeline for nii.gz files below
 
+# --- replace the whole CustomDataset with this npz version ---
+
+from pathlib import Path
+from natsort import natsorted
+from monai.transforms import Compose, EnsureChannelFirstd, ResizeWithPadOrCropd, RandSpatialCropSamplesd, EnsureTyped
+
 class CustomDataset(Dataset):
-    def __init__(self,imgs_path,labels_path, train_flag = True):
-        self.imgs_path = imgs_path
-        self.labels_path = labels_path
+    def __init__(self, data_path, train_flag=True):
+        self.data_path = Path(data_path)
         self.train_flag = train_flag
-        file_list  = natsorted(glob.glob(os.path.join(self.imgs_path, "*.mat")), key=lambda y: y.lower())
-        label_list = natsorted(glob.glob(os.path.join(self.labels_path, "*.mat")), key=lambda y: y.lower())
 
-        if not file_list:
-            raise FileNotFoundError(f"No .mat files under {self.imgs_path}")
-        if not label_list:
-            raise FileNotFoundError(f"No .mat files under {self.labels_path}")
+        self.files = natsorted([str(p) for p in self.data_path.glob("*.npz")])
+        if not self.files:
+            raise FileNotFoundError(f"No .npz files under {self.data_path}")
 
-        self.data = []
-        self.label = []
-        for img_path in file_list:
-            class_name = img_path.split("/")[-1]
-            self.data.append([img_path, class_name])
-        for label_path in label_list:
-                class_name = label_path.split("/")[-1]
-                self.label.append([label_path, class_name])
-        self.train_transforms = Compose(
-                [
-                    EnsureChannelFirstd(keys=["image","label"], channel_dim="no_channel"),
-                    ResizeWithPadOrCropd(
-                          keys=["image","label"],
-                          spatial_size=img_size,
-                          constant_values = -1,
-                    ),
-                    RandSpatialCropSamplesd(keys=["image","label"],
-                                      roi_size = patch_size,
-                                      num_samples = patch_num,
-                                      random_size=False,
-                                      ),
-                    EnsureTyped(keys=["image","label"]),
-                ]
-            )
-        self.test_transforms = Compose(
-                [
-                    EnsureChannelFirstd(keys=["image","label"], channel_dim="no_channel"),
-                    ResizeWithPadOrCropd(
-                          keys=["image","label"],
-                          spatial_size=img_size,
-                          constant_values = -1,
-                    ),
-                    EnsureTyped(keys=["image","label"]),
-                ]
-            )
+        self.train_transforms = Compose([
+            EnsureChannelFirstd(keys=["image","label"], channel_dim="no_channel"),
+            ResizeWithPadOrCropd(keys=["image","label"], spatial_size=img_size, constant_values=-1),
+            RandSpatialCropSamplesd(keys=["image","label"], roi_size=patch_size, num_samples=patch_num, random_size=False),
+            EnsureTyped(keys=["image","label"]),
+        ])
+        self.test_transforms = Compose([
+            EnsureChannelFirstd(keys=["image","label"], channel_dim="no_channel"),
+            ResizeWithPadOrCropd(keys=["image","label"], spatial_size=img_size, constant_values=-1),
+            EnsureTyped(keys=["image","label"]),
+        ])
+
     def __len__(self):
-        return len(self.data)
+        return len(self.files)
 
     def __getitem__(self, idx):
+        f = self.files[idx]
+        with np.load(f) as d:
+            mri  = d["image"].astype(np.float32)
+            ct   = d["label"].astype(np.float32)
 
-        img_path, class_name = self.data[idx]
-
-        cao = scipy.io.loadmat(img_path, appendmat=False)
+        sample = {"image": mri, "label": ct}
 
         if not self.train_flag:
-            affined_data_dict = self.test_transforms(cao)
-            img_tensor = affined_data_dict['image'].to(torch.float)
-            label_tensor = affined_data_dict['label'].to(torch.float)
+            out = self.test_transforms(sample)
+            img_tensor   = out["image"].to(torch.float)
+            label_tensor = out["label"].to(torch.float)
         else:
-            affined_data_dict = self.train_transforms(cao)
-            img = np.zeros([patch_num, patch_size[0], patch_size[1], patch_size[2]])
-            label = np.zeros([patch_num, patch_size[0], patch_size[1], patch_size[2]])
-            for i,after_l in enumerate(affined_data_dict):
-                img[i,:,:,:] = after_l['image']
-                label[i,:,:,:] = after_l['label']
-            img_tensor = torch.unsqueeze(torch.from_numpy(img.copy()), 1).to(torch.float)
-            label_tensor = torch.unsqueeze(torch.from_numpy(label.copy()), 1).to(torch.float)
+            outs = self.train_transforms(sample)   # list of dicts (num_samples)
+            img   = np.zeros([patch_num, patch_size[0], patch_size[1], patch_size[2]], dtype=np.float32)
+            label = np.zeros_like(img)
+            for i, s in enumerate(outs):
+                img[i]   = s["image"]
+                label[i] = s["label"]
+            img_tensor   = torch.from_numpy(img).unsqueeze(1)    # [N,1,D,H,W]
+            label_tensor = torch.from_numpy(label).unsqueeze(1)
 
-        # right after loading a batch in __getitem__ or before compute loss
-        print("img min/max:", img_tensor.min().item(), img_tensor.max().item())
-        print("lbl min/max:", label_tensor.min().item(), label_tensor.max().item())
+        return img_tensor, label_tensor
 
-        return img_tensor,label_tensor
 
 # # Data processing for nii files (including reading, adding channels, align orientation, align spacing, normalization (MRI and CT  has different normalization), cropping and padding, and finally extracing patches for training.
-#
 # # But trust me, this process takes a lot of time. Try to process all the data before you run the model instead of processing them on-the-fly. At least try to get rid of the spacing and orientation.
-
-# In[ ]:
 
 
 # # Only be careful about the ResizeWithPadOrCropd. I am not sure should you use it or not. In my case,
@@ -332,7 +301,6 @@ class CustomDataset(Dataset):
 
 # # Build the MC-IDDPM process
 
-# In[ ]:
 
 
 # These three parameters: training steps number, learning variance or not (using improved DDPM or original DDPM), and inference
@@ -368,7 +336,6 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # # Build the MC-IDDPM network
 
-# In[ ]:
 
 
 # Here enter your network parameters:num_channels means the initial channels in each block,
@@ -419,38 +386,6 @@ A_to_B_model = SwinVITModel(
           use_new_attention_order=False,
       ).to(device)
 
-# In[ ]:
-
-
-# #In case you want to use CNN
-# from network.Diffusion_model_Unet import *
-# A_to_B_model = UNetModel(
-#         img_size = patch_size,
-#         image_size=patch_size[0],
-#         in_channels=2,
-#         model_channels=num_channels,
-#         out_channels=2,
-#         dims = 3,
-#         num_res_blocks=num_res_blocks[0],
-#         attention_resolutions=tuple(attention_ds),
-#         dropout=0.,
-#         sample_kernel=sample_kernel,
-#         channel_mult=channel_mult,
-#         num_classes=(128 if class_cond else None),
-#         use_checkpoint=False,
-#         use_fp16=False,
-#         num_heads=4,
-#         num_head_channels=64,
-#         num_heads_upsample=-1,
-#         use_scale_shift_norm=use_scale_shift_norm,
-#         resblock_updown=False,
-#         use_new_attention_order=False,
-#     ).to(device)
-
-# # Call the optimizer and ready for start
-
-# In[ ]:
-
 
 pytorch_total_params = sum(p.numel() for p in A_to_B_model.parameters())
 print('parameter number is '+str(pytorch_total_params))
@@ -461,7 +396,6 @@ scaler = torch.cuda.amp.GradScaler()
 
 # # Build the training function. Run the training function once = one epoch
 
-# In[ ]:
 
 
 # Here we explain the training process
@@ -519,7 +453,6 @@ def train(model, optimizer,data_loader1, loss_history, max_steps_per_epoch=None)
 
 # # Build the testing function.
 
-# In[ ]:
 
 
 # Use the window sliding method to translate the whole MRI to CT volume. Must used it.
@@ -610,8 +543,8 @@ def evaluate(model, epoch, out_dir, data_loader1, best_loss, save_outputs=False,
 training_path = os.path.join('SynthRAD', 'imagesTr')
 testing_path = os.path.join('SynthRAD', 'imagesTs')
 
-training_set1 = CustomDataset(training_path, training_path, train_flag=True)
-testing_set1 = CustomDataset(testing_path, testing_path, train_flag=False)
+training_set1 = CustomDataset(training_path, train_flag=True)
+testing_set1 = CustomDataset(testing_path, train_flag=False)
 
 # Enter your data reader parameters
 train_params = {
