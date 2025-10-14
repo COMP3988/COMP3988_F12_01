@@ -89,6 +89,16 @@ def preprocess_synthrad(synthrad_location, out_dir, seed, proportion):
 
             out_path = os.path.join(out_dir, subdir, f"{patient_code}.mat")
 
+            # MRI robust scaling to [-1,1]
+            p_lo, p_hi = np.percentile(mri_arr, [0.5, 99.5])
+            mri_arr = np.clip(mri_arr, p_lo, p_hi)
+            mri_arr = 2.0 * (mri_arr - p_lo) / (p_hi - p_lo + 1e-6) - 1.0
+
+            # CT HU clip [-1000, 3000] then to [-1,1]
+            ct_arr = np.clip(ct_arr, -1000, 3000)
+            ct_arr = (ct_arr + 1000) / (3000 + 1000)   # -> [0,1]
+            ct_arr = ct_arr * 2.0 - 1.0                # -> [-1,1]
+
             scipy.io.savemat(out_path, {
                 "image": mri_arr,
                 "label": ct_arr
