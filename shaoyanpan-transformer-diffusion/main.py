@@ -3,21 +3,14 @@ Converted from the Jupyter notebook using nbconvert
 """
 
 import argparse
+from tqdm.auto import tqdm
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--epochs", default="20",
+parser.add_argument("--epochs", type=int, default=20,
                     help="Number of epochs to train")
 args = parser.parse_args()
 
 # ^^^ MANUALLY ADDED ^^^
-
-#!/usr/bin/env python
-# coding: utf-8
-
-# # Here are the library you need to import
-
-# In[ ]:
-
 
 import PIL
 import time
@@ -48,7 +41,7 @@ from skimage.transform import rotate, AffineTransform
 from timm.models.layers import DropPath, to_3tuple, trunc_normal_
 from monai.transforms import (
     AsDiscrete,
-    AddChanneld,
+    EnsureChannelFirstd,
     Compose,
     CropForegroundd,
     LoadImaged,
@@ -59,7 +52,7 @@ from monai.transforms import (
     ScaleIntensityRanged,
     Spacingd,
     RandRotate90d,
-    ToTensord,
+    EnsureTyped,
     RandAffined,
     RandCropByLabelClassesd,
     SpatialPadd,
@@ -77,12 +70,34 @@ from monai.transforms import (
     RandSpatialCropSamplesd,
     ResizeWithPadOrCropd
 )
-from monai.transforms import (CastToTyped,
-                              Compose, CropForegroundd, EnsureChannelFirstd, LoadImaged,
-                              NormalizeIntensity, RandCropByPosNegLabeld,
-                              RandFlipd, RandGaussianNoised,
-                              RandGaussianSmoothd, RandScaleIntensityd,
-                              RandZoomd, SpatialCrop, SpatialPadd, EnsureTyped)
+from monai.transforms import (
+    EnsureChannelFirstd,
+    EnsureTyped,
+    Compose,
+    CropForegroundd,
+    LoadImaged,
+    Orientationd,
+    RandFlipd,
+    RandCropByPosNegLabeld,
+    RandShiftIntensityd,
+    ScaleIntensityRanged,
+    Spacingd,
+    RandRotate90d,
+    RandAffined,
+    SpatialPadd,
+    RandAdjustContrastd,
+    ScaleIntensityd,
+    NormalizeIntensityd,
+    RandScaleIntensityd,
+    RandGaussianNoised,
+    RandGaussianSmoothd,
+    ScaleIntensityRangePercentilesd,
+    Resized,
+    Transposed,
+    RandSpatialCropd,
+    RandSpatialCropSamplesd,
+    ResizeWithPadOrCropd,
+)
 from monai.transforms.compose import MapTransform
 from monai.config import print_config
 from monai.metrics import DiceMetric
@@ -109,9 +124,9 @@ from diffusion.resampler import *
 # image size, image spacing (don't forget to adjust the spacing to your desired number)
 BATCH_SIZE_TRAIN = 4*1
 img_size = (256,256,128)
-patch_size = (64,64,4)
+patch_size = (64,64,2)
 spacing = (2,2,2)
-patch_num = 2
+patch_num = 1
 channels = 1
 metric = torch.nn.L1Loss()
 
@@ -129,8 +144,13 @@ class CustomDataset(Dataset):
         self.imgs_path = imgs_path
         self.labels_path = labels_path
         self.train_flag = train_flag
-        file_list = natsorted(glob.glob(self.imgs_path + "*"), key=lambda y: y.lower())
-        label_list = natsorted(glob.glob(self.labels_path + "*"), key=lambda y: y.lower())
+        file_list  = natsorted(glob.glob(os.path.join(self.imgs_path, "*.mat")), key=lambda y: y.lower())
+        label_list = natsorted(glob.glob(os.path.join(self.labels_path, "*.mat")), key=lambda y: y.lower())
+
+        if not file_list:
+            raise FileNotFoundError(f"No .mat files under {self.imgs_path}")
+        if not label_list:
+            raise FileNotFoundError(f"No .mat files under {self.labels_path}")
 
         self.data = []
         self.label = []
@@ -142,7 +162,7 @@ class CustomDataset(Dataset):
                 self.label.append([label_path, class_name])
         self.train_transforms = Compose(
                 [
-                    AddChanneld(keys=["image","label"]),
+                    EnsureChannelFirstd(keys=["image","label"], channel_dim="no_channel"),
                     ResizeWithPadOrCropd(
                           keys=["image","label"],
                           spatial_size=img_size,
@@ -153,18 +173,18 @@ class CustomDataset(Dataset):
                                       num_samples = patch_num,
                                       random_size=False,
                                       ),
-                    ToTensord(keys=["image","label"]),
+                    EnsureTyped(keys=["image","label"]),
                 ]
             )
         self.test_transforms = Compose(
                 [
-                    AddChanneld(keys=["image","label"]),
+                    EnsureChannelFirstd(keys=["image","label"], channel_dim="no_channel"),
                     ResizeWithPadOrCropd(
                           keys=["image","label"],
                           spatial_size=img_size,
                           constant_values = -1,
                     ),
-                    ToTensord(keys=["image","label"]),
+                    EnsureTyped(keys=["image","label"]),
                 ]
             )
     def __len__(self):
@@ -174,7 +194,7 @@ class CustomDataset(Dataset):
 
         img_path, class_name = self.data[idx]
 
-        cao = scipy.io.loadmat(img_path)
+        cao = scipy.io.loadmat(img_path, appendmat=False)
 
         if not self.train_flag:
             affined_data_dict = self.test_transforms(cao)
@@ -190,6 +210,9 @@ class CustomDataset(Dataset):
             img_tensor = torch.unsqueeze(torch.from_numpy(img.copy()), 1).to(torch.float)
             label_tensor = torch.unsqueeze(torch.from_numpy(label.copy()), 1).to(torch.float)
 
+        # right after loading a batch in __getitem__ or before compute loss
+        print("img min/max:", img_tensor.min().item(), img_tensor.max().item())
+        print("lbl min/max:", label_tensor.min().item(), label_tensor.max().item())
 
         return img_tensor,label_tensor
 
@@ -224,7 +247,7 @@ class CustomDataset(Dataset):
 #         self.train_transforms = Compose(
 #                 [
 #                     LoadImaged(keys=["image","label"],reader='nibabelreader'),
-#                     AddChanneld(keys=["image","label"]),
+#                     EnsureChannelFirstd(keys=["image","label"]),
 #                     Orientationd(keys=["image","label"], axcodes="RAS"),
 #                     Spacingd(
 #                         keys=["image","label"],
@@ -251,13 +274,13 @@ class CustomDataset(Dataset):
 #                                       random_size=False,
 #                                       ),
 
-#                     ToTensord(keys=["image","label"]),
+#                     EnsureTyped(keys=["image","label"]),
 #                 ]
 #             )
 #         self.test_transforms = Compose(
 #                 [
 #                     LoadImaged(keys=["image","label"],reader='nibabelreader'),
-#                     AddChanneld(keys=["image","label"]),
+#                     EnsureChannelFirstd(keys=["image","label"]),
 #                     Orientationd(keys=["image","label"], axcodes="RAS"),
 #                     Spacingd(
 #                         keys=["image","label"],
@@ -279,7 +302,7 @@ class CustomDataset(Dataset):
 # #                           spatial_size=img_size,
 # #                           constant_values = -1,
 # #                     ),
-#                     ToTensord(keys=["image","label"]),
+#                     EnsureTyped(keys=["image","label"]),
 #                 ]
 #             )
 #     def __len__(self):
@@ -360,8 +383,8 @@ num_channels=64
 attention_resolutions="32,16,8"
 channel_mult = (1, 2, 3, 4)
 num_heads=[4,4,8,16]
-window_size = [[4,4,4],[4,4,4],[4,4,2],[4,4,2]]
-num_res_blocks = [2,2,2,2]
+window_size = [[4,4,2],[4,4,2],[4,4,2],[4,4,2]]
+num_res_blocks = [1,1,1,1]
 sample_kernel=([2,2,2],[2,2,1],[2,2,1],[2,2,1]),
 
 attention_ds = []
@@ -432,6 +455,7 @@ A_to_B_model = SwinVITModel(
 pytorch_total_params = sum(p.numel() for p in A_to_B_model.parameters())
 print('parameter number is '+str(pytorch_total_params))
 torch.backends.cudnn.benchmark = True
+torch.set_float32_matmul_precision("high")
 optimizer = torch.optim.AdamW(A_to_B_model.parameters(), lr=2e-5,weight_decay = 1e-4)
 scaler = torch.cuda.amp.GradScaler()
 
@@ -441,7 +465,7 @@ scaler = torch.cuda.amp.GradScaler()
 
 
 # Here we explain the training process
-def train(model, optimizer,data_loader1, loss_history):
+def train(model, optimizer,data_loader1, loss_history, max_steps_per_epoch=None):
 
     #1: set the model to training mode
     model.train()
@@ -450,7 +474,14 @@ def train(model, optimizer,data_loader1, loss_history):
     total_time = 0
 
     #2: Loop the whole dataset, x1 (traindata) is the image batch
-    for i, (x1,y1) in enumerate(data_loader1):
+    pbar = tqdm(data_loader1, total=len(data_loader1), desc=f"Train {epoch}")
+    for i, (x1,y1) in enumerate(pbar):
+
+        if max_steps_per_epoch is not None and i >= max_steps_per_epoch:
+            break
+
+        if i % 5 == 0 and A_to_B_loss_sum:
+            pbar.set_postfix(avg_loss=float(np.nanmean(A_to_B_loss_sum)))
 
         traintarget = y1.view(-1,1,patch_size[0],patch_size[1],patch_size[2]).to(device)
 
@@ -478,11 +509,6 @@ def train(model, optimizer,data_loader1, loss_history):
 
         #5:print out the intermediate loss for every 100 batches
         total_time += time.time()-aa
-        if i % 30 == 0:
-            print('optimization time: '+ str(time.time()-aa))
-            print('[' +  '{:5}'.format(i * BATCH_SIZE_TRAIN) + '/' + '{:5}'.format(total_samples) +
-                  ' (' + '{:3.0f}'.format(100 * i / len(data_loader1)) + '%)]  A_to_B_Loss: ' +
-                  '{:6.7f}'.format(np.nanmean(A_to_B_loss_sum)))
 
     #6: print out the average loss for this epoch
     average_loss = np.nanmean(A_to_B_loss_sum)
@@ -514,64 +540,92 @@ def diffusion_sampling(condition, model):
                                                     condition = condition,clip_denoised=True)
     return sampled_images
 
-# Run the evaluate function will translate the MRI to CT and will be save to a folder in MAT format
-def evaluate(model,epoch,path,data_loader1,best_loss):
+# ---- fast eval helpers ----
+def make_eval_diffusion(num_steps=10):
+    return create_gaussian_diffusion(
+        steps=diffusion_steps,
+        learn_sigma=learn_sigma,
+        sigma_small=sigma_small,
+        noise_schedule=noise_schedule,
+        use_kl=use_kl,
+        predict_xstart=predict_xstart,
+        rescale_timesteps=rescale_timesteps,
+        rescale_learned_sigmas=rescale_learned_sigmas,
+        timestep_respacing=[num_steps],  # far fewer steps than train
+    )
+
+def make_eval_inferer(overlap=0.0, sw_batch_size=32):
+    return SlidingWindowInferer(
+        roi_size=patch_size,
+        sw_batch_size=sw_batch_size,
+        overlap=overlap,
+        mode="constant",
+    )
+
+def diffusion_sampling_with(diffusion_obj, condition, model):
+    return diffusion_obj.p_sample_loop(
+        model,
+        (condition.shape[0], 1, condition.shape[2], condition.shape[3], condition.shape[4]),
+        condition=condition,
+        clip_denoised=True,
+    )
+
+# ---- cheap eval ----
+def evaluate(model, epoch, out_dir, data_loader1, best_loss, save_outputs=False,
+             max_batches=1, eval_steps=10, eval_overlap=0.0, eval_sw_batch=32):
     model.eval()
-    prediction = []
-    true = []
-    img = []
-    loss_all = []
-    aa = time.time()
-    with torch.no_grad():
-        for i, (x1,y1) in enumerate(data_loader1):
-                # target is the target CT
-                # condition is the input MRI
-                # sampled_images is the synthetic CT
-                target = y1.to(device)
-                condition = x1.to(device)
-                with torch.cuda.amp.autocast():
-                      sampled_images = inferer(condition,diffusion_sampling,model)
-                loss = metric(sampled_images,target)
-                print('L1 loss: '+ str(loss))
-                img.append(x1.cpu().numpy())
-                true.append(target.cpu().numpy())
-                prediction.append(sampled_images.cpu().numpy())
-                loss_all.append(loss.cpu().numpy())
+    loss_all, prediction, true, img = [], [], [], []
+    eval_diffusion = make_eval_diffusion(num_steps=eval_steps)
+    eval_inferer   = make_eval_inferer(overlap=eval_overlap, sw_batch_size=eval_sw_batch)
 
+    t0 = time.time()
+    with torch.no_grad(), torch.cuda.amp.autocast():
+        for i, (x1, y1) in enumerate(tqdm(data_loader1, total=min(len(data_loader1), max_batches),
+                                          desc=f"Eval {epoch}", leave=False)):
+            target = y1.to(device)
+            condition = x1.to(device)
+            sampled = eval_inferer(condition, lambda c, m: diffusion_sampling_with(eval_diffusion, c, m), model)
+            loss = metric(sampled, target)
+            loss_all.append(loss.detach().cpu().numpy())
 
-        print('optimization time: '+ str(1*(time.time()-aa)))
-        # The save code, you can replace it by your code for other files, e.g. nii or dicom
-        data = {"img":img,'label':true,'prediction':prediction,'loss':np.mean(loss_all)}
-        scipy.io.savemat(path+ 'test_example_epoch'+str(epoch)+'.mat',data)
-        if np.mean(loss_all) < best_loss:
-            scipy.io.savemat(path+ 'all_final_test_another.mat',data)
-        return np.mean(loss_all)
+            if save_outputs:
+                img.append(x1.cpu().numpy()); true.append(target.cpu().numpy()); prediction.append(sampled.cpu().numpy())
+
+            if i + 1 >= max_batches:
+                break
+
+    avg = float(np.mean(loss_all)) if loss_all else float("nan")
+    print(f"Eval time: {time.time()-t0:.2f}s  avg L1: {avg:.6f}")
+
+    if save_outputs:
+        data = {"img": img, "label": true, "prediction": prediction, "loss": avg}
+        scipy.io.savemat(os.path.join(out_dir, f"test_example_epoch{epoch}.mat"), data)
+        if avg < best_loss:
+            scipy.io.savemat(os.path.join(out_dir, "all_final_test_another.mat"), data)
+    return avg
 
 # # Start the training and testing
 
-# In[ ]:
 
-
-# Enter your data folder
-from os import path
-
-training_path = path.join('SynthRAD', 'imagesTr')
-testing_path = path.join('SynthRAD', 'imagesTs')
+training_path = os.path.join('SynthRAD', 'imagesTr')
+testing_path = os.path.join('SynthRAD', 'imagesTs')
 
 training_set1 = CustomDataset(training_path, training_path, train_flag=True)
 testing_set1 = CustomDataset(testing_path, testing_path, train_flag=False)
 
 # Enter your data reader parameters
-train_params = {'batch_size': BATCH_SIZE_TRAIN,
-          'shuffle': True,
-          'pin_memory': True,
-          'drop_last': False}
+train_params = {
+    "batch_size": BATCH_SIZE_TRAIN,
+    "shuffle": True,
+    "pin_memory": True,
+    "drop_last": False,
+    "num_workers": 4,
+    "persistent_workers": True,
+    "prefetch_factor": 4,
+}
 train_loader1 = torch.utils.data.DataLoader(training_set1, **train_params)
 
-test_params = {'batch_size': 1,
-          'shuffle': False,
-          'pin_memory': True,
-          'drop_last': False}
+test_params = {**train_params, "batch_size": 1, "shuffle": False}
 test_loader1 = torch.utils.data.DataLoader(testing_set1, **test_params)
 
 # Enter your total number of epoch
@@ -579,10 +633,11 @@ N_EPOCHS = args.epochs
 
 # Enter the address you save the checkpoint and the evaluation examples
 checkpoint_dir = 'synthRAD_checkpoints'
-A_to_B_PATH = path.join(checkpoint_dir, 'Synth_A_to_B.pth')
-best_loss = 1
-if not os.path.exists(path):
-  os.makedirs(path)
+
+os.makedirs(checkpoint_dir, exist_ok=True)
+A_to_B_PATH = os.path.join(checkpoint_dir, 'Synth_A_to_B.pth')
+best_loss = float('inf')
+
 train_loss_history, test_loss_history = [], []
 
 # Uncomment this when you resume the checkpoint
@@ -590,12 +645,16 @@ train_loss_history, test_loss_history = [], []
 for epoch in range(0, N_EPOCHS):
     print('Epoch:', epoch)
     start_time = time.time()
-    train(A_to_B_model, optimizer,train_loader1, train_loss_history,)
+    train(A_to_B_model, optimizer,train_loader1, train_loss_history, 1) # TODO remove 5
     print('Execution time:', '{:5.2f}'.format(time.time() - start_time), 'seconds')
     if epoch % 5 == 0:
-        average_loss = evaluate(A_to_B_model,epoch,path,test_loader1,best_loss)
+        print("Starting eval...")
+        average_loss = evaluate(A_to_B_model, epoch, checkpoint_dir, test_loader1, best_loss,
+                save_outputs=False, max_batches=1, eval_steps=10, eval_overlap=0.0, eval_sw_batch=32)
+        print("Eval done.")
         if average_loss < best_loss:
             print('Save the latest best model')
             torch.save(A_to_B_model.state_dict(), A_to_B_PATH)
             best_loss = average_loss
+
 print('Execution time')

@@ -1,35 +1,21 @@
-name: synthrad-gpu
-channels:
-  - pytorch
-  - nvidia
-  - conda-forge
-  - defaults
+name: synthrad-l4
+channels: [pytorch, nvidia, conda-forge]
 dependencies:
-  - python=3.9
-  - pytorch
-  - torchvision
-  - torchaudio
+  - python=3.10
+  - pytorch=2.2.2
+  - torchvision=0.17.2
+  - torchaudio=2.2.2
+1
   - numpy
-  - pandas
-  - matplotlib
-  - scikit-learn
+  - scipy
   - scikit-image
-  - nibabel
-  - pydicom
-  - simpleitk
+  - matplotlib
+  - pillow
+  - natsort
   - pip
   - pip:
-      - monai==0.7.0
-      - einops==0.3.2
-      - timm==0.4.12
-      - ml-collections==0.1.0
-      - medpy==0.4.0
-      - medutils==0.1.15
-      - torchio==0.18.57
+      - einops==0.7.0
+      - timm==0.9.16
+      - monai==1.3.2
       - torchsummary==1.5.1
-      - volumentations-3d==1.0.3
-      - seg-metrics==1.0.17
-      - tqdm
-      - seaborn
-      - opencv-python
-      - natsort
+      - tqdm==4.66.4
