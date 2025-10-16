@@ -263,7 +263,7 @@ def main():
     print(f"{'─'*70}")
     
     # Comparison with Stage 2 only
-    print(f"\n📊 COMPARISON: Stage 2 VQ-GAN vs Complete LDM (Stage 3)")
+    print(f"\nCOMPARISON: Stage 2 VQ-GAN vs Complete LDM (Stage 3)")
     print(f"{'─'*70}")
     print(f"Stage 2 VQ-GAN only:     SSIM ≈ 0.37, PSNR ≈ 20 dB")
     print(f"Complete LDM (3 stages): SSIM = {avg_ssim_3d:.4f}, PSNR = {avg_psnr:.2f} dB")
@@ -276,7 +276,7 @@ def main():
     print(f"{'─'*70}")
     
     # Analysis
-    print(f"\n⚠️  PERFORMANCE ANALYSIS:")
+    print(f"\nPERFORMANCE ANALYSIS:")
     print(f"{'─'*70}")
     print(f"Model: Complete LDM (VQ-GAN + SPADE + Diffusion)")
     print(f"Resolution: 64×64×64 (reduced from 192×192×192)")
@@ -284,7 +284,7 @@ def main():
     print(f"Training epochs: 30 per stage (90 total)")
     print(f"Training device: CPU (very slow)")
     print(f"DDIM sampling steps: 50")
-    print(f"\n💡 TO IMPROVE FURTHER:")
+    print(f"\nTO IMPROVE FURTHER:")
     print(f"  1. Increase resolution to 128×128×128 or 192×192×192")
     print(f"  2. Train on more data (at least 50-100 samples)")
     print(f"  3. Train for more epochs (100-200 per stage)")
