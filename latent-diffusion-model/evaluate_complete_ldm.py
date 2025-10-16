@@ -198,7 +198,7 @@ def main():
         ct_path = os.path.join(sample_dataset_path, patient_id, 'ct.mha')
         
         # Load data
-        print(f"    Loading MRI and CT volumes...")
+        print(f"Loading MRI and CT volumes...")
         mri_tensor, ct_real_tensor = load_mri_ct_volume(mri_path, ct_path, image_size=64)
         
         # Generate CT from MRI using complete LDM
