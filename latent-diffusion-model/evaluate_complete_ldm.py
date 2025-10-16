@@ -313,7 +313,7 @@ def main():
 if __name__ == "__main__":
     results = main()
     print(f"\n" + "="*70)
-    print(f"✓ COMPLETE LDM EVALUATION FINISHED!")
+    print(f"✓ COMPLETE LDM EVALUATION FINISHED:")
     print(f"  Final SSIM: {results['avg_ssim']:.4f}")
     print(f"  Final PSNR: {results['avg_psnr']:.2f} dB")
     print(f"  SSIM Improvement: {results['improvement_ssim']:+.1f}%")
