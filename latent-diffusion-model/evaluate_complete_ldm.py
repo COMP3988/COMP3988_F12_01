@@ -202,7 +202,7 @@ def main():
         mri_tensor, ct_real_tensor = load_mri_ct_volume(mri_path, ct_path, image_size=64)
         
         # Generate CT from MRI using complete LDM
-        print(f"    Generating CT from MRI using LDM...")
+        print(f"Generating CT from MRI using LDM...")
         ct_generated_tensor = generate_ct_from_mri_ldm(model, sampler, mri_tensor, num_steps=50)
         
         # Calculate all metrics
