@@ -539,7 +539,6 @@ def evaluate(model, epoch, out_dir, data_loader1, best_loss, save_outputs=False,
 
 # # Start the training and testing
 
-
 training_path = os.path.join('SynthRAD', 'imagesTr')
 testing_path = os.path.join('SynthRAD', 'imagesTs')
 
@@ -574,11 +573,11 @@ best_loss = float('inf')
 train_loss_history, test_loss_history = [], []
 
 # Uncomment this when you resume the checkpoint
-#A_to_B_model.load_state_dict(torch.load(A_to_B_PATH),strict=False)
+A_to_B_model.load_state_dict(torch.load(A_to_B_PATH),strict=False)
 for epoch in range(0, N_EPOCHS):
     print('Epoch:', epoch)
     start_time = time.time()
-    train(A_to_B_model, optimizer,train_loader1, train_loss_history, 1) # TODO remove 5
+    train(A_to_B_model, optimizer,train_loader1, train_loss_history)
     print('Execution time:', '{:5.2f}'.format(time.time() - start_time), 'seconds')
     if epoch % 5 == 0:
         print("Starting eval...")
