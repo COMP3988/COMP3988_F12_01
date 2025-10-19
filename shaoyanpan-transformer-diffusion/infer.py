@@ -49,15 +49,20 @@ def parse_args():
 
 
 # Hyperparameters copied from training script
-img_size = (256, 256, 128)
-patch_size = (64, 64, 2)
-num_channels = 64
-attention_resolutions = "32,16,8"
+num_channels=64
+attention_resolutions="32,16,8"
 channel_mult = (1, 2, 3, 4)
-num_heads = [4, 4, 8, 16]
-window_size = [[4, 4, 2], [4, 4, 2], [4, 4, 2], [4, 4, 2]]
-num_res_blocks = [1, 1, 1, 1]
-sample_kernel = ([2, 2, 2], [2, 2, 1], [2, 2, 1], [2, 2, 1])
+num_heads=[4,4,8,16]
+window_size = [[4,4,2],[4,4,2],[4,4,2],[4,4,2]]
+num_res_blocks = [1,1,1,1]
+sample_kernel=([2,2,2],[2,2,1],[2,2,1],[2,2,1]),  # keep trailing comma to match training
+attention_ds = [int(x) for x in attention_resolutions.split(",")]
+
+# ---------------- config (match training) ----------------
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+img_size   = (256,256,128)
+patch_size = (64,64,2)
+patch_num  = 1
 
 # Diffusion hyperparams copied from training script
 DIFFUSION_STEPS = 1000
