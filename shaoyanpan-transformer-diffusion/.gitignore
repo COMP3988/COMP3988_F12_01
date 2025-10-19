@@ -1,3 +1,6 @@
 # this model uses data preprocessed as matlab arrays
 *.mat
 *.npz
+
+# just for recollection/history
+!200_epochs.log
