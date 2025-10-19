@@ -11,6 +11,7 @@ dependencies:
   - matplotlib
   - pillow
   - natsort
+  - simpleitk
   - pip
   - pip:
       - einops==0.7.0
