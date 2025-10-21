@@ -36,7 +36,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="MRI→CT inference to .mha")
 
     # required args
-    p.add_argument("--ckpt", help="Path to model checkpoint (.pth)")
+    p.add_argument("--ckpt", required=True, help="Path to model checkpoint (.pth)")
     p.add_argument("--input", required=True, help="Path to a single .npz or .mha/.mhd file")
     p.add_argument("--output", required=True, help="Output directory for .mha")
 
