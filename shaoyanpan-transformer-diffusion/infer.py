@@ -1,5 +1,3 @@
-
-
 """
 MRI→CT inference script for the transformer-diffusion model.
 - Loads a trained checkpoint
@@ -19,6 +17,8 @@ Notes:
 - Input .npz files are expected to be preprocessed to fixed size and normalized to [-1,1] the same way as training.
 """
 
+# TODO make work with .mhas, not npzs (or both)
+
 import argparse
 import os
 from pathlib import Path
@@ -30,7 +30,6 @@ import SimpleITK as sitk
 
 # Model + diffusion imports from this repo
 from diffusion.Create_diffusion import create_gaussian_diffusion
-from diffusion.resampler import UniformSampler  # not used directly but kept for parity
 from network.Diffusion_model_transformer import SwinVITModel
 
 
@@ -55,11 +54,10 @@ channel_mult = (1, 2, 3, 4)
 num_heads=[4,4,8,16]
 window_size = [[4,4,2],[4,4,2],[4,4,2],[4,4,2]]
 num_res_blocks = [1,1,1,1]
-sample_kernel=([2,2,2],[2,2,1],[2,2,1],[2,2,1]),  # keep trailing comma to match training
+sample_kernel=([2,2,2],[2,2,1],[2,2,1],[2,2,1])  # keep trailing comma to match training
 attention_ds = [int(x) for x in attention_resolutions.split(",")]
 
 # ---------------- config (match training) ----------------
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 img_size   = (256,256,128)
 patch_size = (64,64,2)
 patch_num  = 1
@@ -73,6 +71,11 @@ USE_KL = False
 PREDICT_XSTART = True
 RESCALE_TIMESTEPS = True
 RESCALE_LEARNED_SIGMAS = True
+
+def pick_device(dev):
+    if dev == "mps" and torch.backends.mps.is_available(): return torch.device("mps")
+    if dev.startswith("cuda") and torch.cuda.is_available(): return torch.device(dev)
+    return torch.device("cpu")
 
 
 def build_model(device: torch.device) -> torch.nn.Module:
@@ -169,7 +172,7 @@ def save_mha(volume_np: np.ndarray, out_path: Path, spacing=None, origin=None, d
 
 def main():
     args = parse_args()
-    device = torch.device(args.device if torch.cuda.is_available() or "cpu" in args.device else "cpu")
+    device = pick_device(args.device)
     os.makedirs(args.outdir, exist_ok=True)
 
     # Build model
@@ -185,7 +188,9 @@ def main():
         roi_size=patch_size,
         sw_batch_size=args.sw_batch,
         overlap=args.overlap,
-        mode="constant",
+        mode="gaussian",
+        sigma_scale=0.125,
+        padding_mode="reflect"
     )
 
     # Inputs
@@ -195,8 +200,9 @@ def main():
 
     for npz_path in npz_files:
         vol_np, spacing, origin, direction = load_npz_volume(npz_path)
-        # Expect values already in [-1,1] per preprocessing. If not, normalize here.
-        vol_t = torch.from_numpy(vol_np).unsqueeze(0).unsqueeze(0).to(device)  # (1,1,D,H,W)
+
+        vol_hwd = np.moveaxis(vol_np, 0, -1)          # (D,H,W) -> (H,W,D)
+        vol_t = torch.from_numpy(vol_hwd).unsqueeze(0).unsqueeze(0).to(device)  # (1,1,H,W,D)
 
         with torch.no_grad():
             if autocast_dtype is not None:
@@ -204,14 +210,41 @@ def main():
                     pred = inferer(vol_t, lambda c, m: diffusion_sampling_with(eval_diffusion, c, m), model)
             else:
                 pred = inferer(vol_t, lambda c, m: diffusion_sampling_with(eval_diffusion, c, m), model)
-        ct_np = pred.squeeze(0).squeeze(0).detach().cpu().numpy()  # (D,H,W)
+
+        # pred: (1,1,H,W,D) -> (H,W,D)
+        ct_hwd = pred.squeeze(0).squeeze(0).detach().cpu().numpy()
+        # back to (D,H,W) for SimpleITK
+        ct_dhw = np.moveaxis(ct_hwd, -1, 0).astype(np.float32)
+        ct_dhw = np.ascontiguousarray(ct_dhw)
+
+        print("pred HWD:", ct_hwd.shape, "saved DHW:", ct_dhw.shape)  # expect same dims, reordered
+        Hx, Wx, Dz = ct_hwd.shape
+        Dx, Hy, Wy = ct_dhw.shape
+        assert (Dx,Hy,Wy) == (Dz,Hx,Wx), "axis swap wrong"
+
+        # expected raw bytes if float32
+        exp=Dx*Hy*Wy*4
+        print("expected bytes:", exp)
 
         out_name = npz_path.stem + ".mha"
         out_path = Path(args.outdir) / out_name
-        ref_mha = Path(args.ref_mha) if args.ref_mha else None
-        save_mha(ct_np, out_path, spacing=spacing, origin=origin, direction=direction, ref_mha=ref_mha)
-        print(f"Wrote {out_path}")
 
+        img = sitk.GetImageFromArray(np.ascontiguousarray(ct_dhw).astype(np.float32))
+        if args.ref_mha:
+            ref = sitk.ReadImage(str(args.ref_mha)); img.CopyInformation(ref)
+        else:
+            if spacing is not None:   img.SetSpacing(tuple(spacing))
+            if origin  is not None:   img.SetOrigin(tuple(origin))
+            if direction is not None: img.SetDirection(tuple(direction))
+
+        w = sitk.ImageFileWriter()
+        w.SetFileName(str(out_path))
+        w.UseCompressionOff()
+        w.Execute(img)
+
+        # reopen with SimpleITK, not napari
+        im = sitk.ReadImage(str(out_path))
+        print("SITK size (x,y,z):", im.GetSize(), "pixel:", im.GetPixelIDTypeAsString())
 
 if __name__ == "__main__":
     main()
