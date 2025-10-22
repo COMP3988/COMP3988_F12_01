@@ -1,24 +1,19 @@
 # Jan. 2023, by Junbo Peng, PhD Candidate, Georgia Tech
 import os
-from typing import Dict
 import time
 import datetime
 import sys
 
 import torch
-import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision import transforms
-from torchvision import datasets #V
-from torchvision.utils import save_image
-from torch.autograd import Variable #V
+from torch.autograd import Variable
 
 from Diffusion_condition import GaussianDiffusionTrainer_cond
 from Model_condition import UNet
-from datasets_brain import * #V
+from datasets import ImageDataset
 
 
-dataset_name="brain"
+dataset_name="synthrad_data"
 out_name="trial_1"
 batch_size = 2
 T = 1000
@@ -34,8 +29,8 @@ beta_T = 0.02
 grad_clip = 1
 save_weight_dir = "./Checkpoints/%s"%out_name
 
-Tensor = torch.cuda.FloatTensor
-device = torch.device("cuda")
+# Use appropriate tensor type based on device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 os.makedirs("%s" % save_weight_dir, exist_ok=True)
 train_dataloader = DataLoader(
@@ -56,15 +51,15 @@ for epoch in range(n_epochs):
     for i, batch in enumerate(train_dataloader):
         i = i + 1
         optimizer.zero_grad()
-        ct = Variable(batch["pCT"].type(Tensor))
-        cbct = Variable(batch["CBCT"].type(Tensor)) #condition
+        ct = Variable(batch["a"].to(device))
+        cbct = Variable(batch["b"].to(device)) #condition
         x_0 = torch.cat((ct,cbct),1)
         loss = trainer(x_0)
         loss_save = loss_save + loss/65536
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net_model.parameters(), grad_clip)
         optimizer.step()
-    loss_save = loss_save / i
+    loss_save = loss_save / len(train_dataloader)
 
     time_duration = datetime.timedelta(seconds=(time.time() - prev_time))
     epoch_left = n_epochs - epoch
@@ -82,4 +77,3 @@ for epoch in range(n_epochs):
             loss_save.item(),
         )
     )
-    

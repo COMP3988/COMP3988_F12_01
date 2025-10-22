@@ -19,8 +19,18 @@ class ImageDataset(Dataset):
         for e in exts:
             self.files_A += sorted(glob.glob(os.path.join(root, f"{mode}/a", e)))
             self.files_B += sorted(glob.glob(os.path.join(root, f"{mode}/b", e)))
+        # If standard a/b layout is missing, fall back to SynthRAD Task2-style discovery:
         if len(self.files_A) == 0 or len(self.files_B) == 0:
-            raise FileNotFoundError(f"No input files found under {root}/{mode}/a or {root}/{mode}/b with extensions {exts}")
+            subjects = []
+            for dirpath, dirnames, filenames in os.walk(root):
+                files_lower = {f.lower() for f in filenames}
+                if "ct.mha" in files_lower and "cbct.mha" in files_lower:
+                    subjects.append(dirpath)
+            subjects = sorted(subjects)
+            if len(subjects) == 0:
+                raise FileNotFoundError(f"No input files found under {root}/{mode}/a or {root}/{mode}/b and no subject folders with ct.mha/cbct.mha discovered")
+            self.files_A = [os.path.join(s, "ct.mha") for s in subjects]
+            self.files_B = [os.path.join(s, "cbct.mha") for s in subjects]
 
     def _load_any(self, path):
         path_lower = path.lower()
@@ -32,17 +42,23 @@ class ImageDataset(Dataset):
             arr = d[key]
         elif path_lower.endswith(".mha") or path_lower.endswith(".mhd"):
             img = sitk.ReadImage(path)
-            arr = sitk.GetArrayFromImage(img)  # (D,H,W)
+            arr = sitk.GetArrayFromImage(img)  # (D,H,W) or (H,W)
         else:
             raise ValueError(f"Unsupported file type: {path}")
-        if arr.ndim != 3:
-            raise ValueError(f"Expected 3D volume, got shape {arr.shape} for {path}")
-        return arr.astype(np.float32)
+        # Accept 2D or 3D; if 3D, pick center slice for 2D model
+        if arr.ndim == 3:
+            center_idx = int(arr.shape[0] // 2)
+            arr2d = arr[center_idx]
+        elif arr.ndim == 2:
+            arr2d = arr
+        else:
+            raise ValueError(f"Expected 2D or 3D image, got shape {arr.shape} for {path}")
+        return arr2d.astype(np.float32)
 
     def _to_tensor_chn_first(self, arr3d):
-        # Model expects (C,D,H,W) with C=1
-        t = torch.from_numpy(arr3d)  # (D,H,W)
-        t = torch.unsqueeze(t, 0)    # (1,D,H,W)
+        # Model expects (C,H,W) with C=1 for 2D
+        t = torch.from_numpy(arr3d)  # (H,W)
+        t = torch.unsqueeze(t, 0)    # (1,H,W)
         return t
 
     def __getitem__(self, index):
@@ -55,4 +71,3 @@ class ImageDataset(Dataset):
 
     def __len__(self):
         return max(len(self.files_A), len(self.files_B))
-
