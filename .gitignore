@@ -45,6 +45,7 @@ checkpoints
 # mri volumes and model weights
 *.mha
 *.pth
+*.pt
 
 # training data
 *.zip

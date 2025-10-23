@@ -87,13 +87,12 @@ def main():
     best_loss = float('inf')
     best_epoch = 0
 
-    scaler = torch.amp.GradScaler(device="cuda")
 
     for epoch in range(args.n_epochs):
         epoch = epoch + 1
 
-        running_loss = 0.0
-        running_elems = 0
+        epoch_loss = 0
+        num_batches = 0
 
         net_model.train()
         for i, batch in enumerate(train_dataloader):
@@ -105,25 +104,17 @@ def main():
                 cbct = batch["b"].to(device)
                 x_0 = torch.cat((ct, cbct), 1)
 
-                elems = ct.numel()
+                loss = trainer(x_0)  # Already returns mean loss
+                epoch_loss += loss.item()
+                num_batches += 1
 
-                with torch.amp.autocast(device_type="cuda"):
-                    loss = trainer(x_0)
-                    loss_mean = loss / elems
-
-                scaler.scale(loss_mean).backward()
-                scaler.unscale_(optimizer)
+                loss.backward()
                 torch.nn.utils.clip_grad_norm_(net_model.parameters(), args.grad_clip)
-                scaler.step(optimizer)
-                scaler.update()
-
-                # tracking
-                running_loss += loss.item() * elems       # still sum
-                running_elems += elems
+                optimizer.step()
 
                 # logging
-                if (i + 1) % 5 == 0:
-                    print(f"... Loss(mean): {loss.item():.6f}")
+                # if (i + 1) % 5 == 0:
+                    # print(f"... Loss(mean): {loss.item():.6f}")
 
             except RuntimeError as e:
                 if "out of memory" in str(e):
@@ -133,7 +124,7 @@ def main():
                 else:
                     raise e
 
-        avg_loss = running_loss / running_elems
+        avg_loss = epoch_loss / num_batches
 
         # Check if this is the best model so far
         is_best = avg_loss < best_loss

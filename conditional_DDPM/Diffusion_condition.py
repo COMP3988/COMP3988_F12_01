@@ -39,7 +39,7 @@ class GaussianDiffusionTrainer_cond(nn.Module):
             extract(self.sqrt_alphas_bar, t, ct.shape) * ct +
             extract(self.sqrt_one_minus_alphas_bar, t, ct.shape) * noise)
         x_t = torch.cat((x_t,cbct),1)
-        loss = F.mse_loss(self.model(x_t, t), noise, reduction='sum')
+        loss = F.mse_loss(self.model(x_t, t), noise, reduction='mean')
         return loss
 
 class GaussianDiffusionSampler_cond(nn.Module):
