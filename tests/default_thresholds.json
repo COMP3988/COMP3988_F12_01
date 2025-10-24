@@ -1,0 +1,8 @@
+{
+  "ssim_min": 0.85,
+  "psnr_min": 20.0,
+  "mae_max": 0.1,
+  "hu_mae_max": 60.0,
+  "hu_correlation_min": 0.8,
+  "hu_range_valid_min": 0.95
+}
