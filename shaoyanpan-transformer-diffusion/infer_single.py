@@ -1,20 +1,22 @@
 """
 MRI→CT inference script for the transformer-diffusion model.
 - Loads a trained checkpoint
-- Reads MRI volumes from .npz files (key: "image")
+- Reads a single MRI volume from .npz or .mha/.mhd file
 - Runs sliding-window diffusion sampling
-- Writes CT predictions to .mha, copying geometry from the .npz (keys: spacing/origin/direction) or an optional reference .mha
+- Writes CT prediction to .mha file, copying geometry from input or optional reference
 
 Usage examples:
-  python infer.py \
+  python infer_single.py \
     --ckpt synthRAD_checkpoints/Synth_A_to_B.pth \
-    --input SynthRAD/imagesTs \
-    --outdir outputs_mha \
+    --input SynthRAD/imagesTs/patient001.npz \
+    --output patient001_ct_pred.mha \
     --steps 20 --overlap 0.25 --sw-batch 16
 
 Notes:
-- This matches the network and diffusion hyperparameters used in training code you provided.
-- Input .npz files are expected to be preprocessed to fixed size and normalized to [-1,1] the same way as training.
+- Input: Single .npz file (key: "image") or .mha/.mhd file
+- Output: Single .mha file with CT prediction
+- Uses sliding-window inference for large volumes
+- Input volumes should be preprocessed and normalized to [-1,1] range
 """
 
 import argparse
@@ -38,7 +40,7 @@ def parse_args():
     # required args
     p.add_argument("--ckpt", required=True, help="Path to model checkpoint (.pth)")
     p.add_argument("--input", required=True, help="Path to a single .npz or .mha/.mhd file")
-    p.add_argument("--output", required=True, help="Output directory for .mha")
+    p.add_argument("--output", required=True, help="Output .mha file path")
 
     # recommended defaults / flags
     p.add_argument("--steps", type=int, default=2, help="Diffusion steps at inference (timestep_respacing)")
@@ -215,7 +217,7 @@ def main():
             pred = inferer(vol_t, lambda c, m: diffusion_sampling_with(eval_diffusion, c, m), model)
 
     ct_np = pred.squeeze(0).squeeze(0).detach().cpu().numpy()
-    out_path = Path(args.output).stem + ".mha"
+    out_path = Path(args.output)
     ref_mha = Path(args.ref_mha) if args.ref_mha else None
     save_mha(ct_np, out_path, spacing=spacing, origin=origin, direction=direction, ref_mha=ref_mha)
     print(f"Wrote {out_path}")
