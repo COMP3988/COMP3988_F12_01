@@ -12,6 +12,9 @@ pytorch-CycleGAN-and-pix2pix/results/
 small_sample/
 pytorch-CycleGAN-and-pix2pix/small_sample/
 
+# preprocessed data
+*.npz
+
 # Python cache files
 __pycache__/
 *.pyc
@@ -45,6 +48,7 @@ checkpoints
 # mri volumes and model weights
 *.mha
 *.pth
+*.pt
 
 # training data
 *.zip
