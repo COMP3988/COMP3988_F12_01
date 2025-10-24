@@ -7,8 +7,8 @@ __pycache__/
 *.so
 
 # model weights
-.pt
-.pth
+*.pt
+*.pth
 
 # Distribution / packaging
 .Python
