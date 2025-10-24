@@ -1,6 +1,13 @@
 """
-Infers a whole directory of volumes, wrapping around infer_single.py.
-Supports both .npz and .mha/.mhd inputs.
+Batch inference script for MRI→CT conversion using transformer-diffusion model.
+Processes all .npz/.mha/.mhd files in a directory using infer_single.py.
+
+Usage:
+  python infer_directory.py \
+    --ckpt synthRAD_checkpoints/Synth_A_to_B.pth \
+    --inputdir SynthRAD/imagesTs \
+    --outputdir outputs_mha \
+    --steps 20 --overlap 0.25 --sw-batch 16
 """
 
 import argparse
@@ -43,11 +50,15 @@ def main():
 
     for infile in inputs:
         print(f"Processing {infile}...")
+        # Generate output filename
+        infile_path = Path(infile)
+        outfile = outputdir / f"{infile_path.stem}_ct_pred.mha"
+
         cmd = [
-            "python", "infer.py",
+            "python", "infer_single.py",
             "--ckpt", args.ckpt,
             "--input", infile,
-            "--outdir", str(outputdir),
+            "--output", str(outfile),
             "--steps", str(args.steps),
             "--overlap", str(args.overlap),
             "--sw-batch", str(args.sw_batch),

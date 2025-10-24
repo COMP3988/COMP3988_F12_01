@@ -1,5 +1,18 @@
 """
-Converted from the Jupyter notebook using nbconvert
+Training script for 3D transformer-based denoising diffusion model for MRI→CT synthesis.
+
+This script trains a SwinViT-based diffusion model to generate synthetic CT scans from MRI volumes.
+Uses sliding-window inference and MONAI transforms for 3D medical image processing.
+
+Usage:
+    python main.py --epochs 50
+
+Features:
+- Configurable training epochs
+- Sliding-window inference for evaluation
+- Automatic checkpoint saving
+- Progress bars with tqdm
+- Mixed precision training with AMP
 """
 
 import argparse
@@ -127,13 +140,9 @@ patch_num = 1
 channels = 1
 metric = torch.nn.L1Loss()
 
-# # Data processing for mat files (contain {'image', 'label'}) (for nii files, in the next block)
-
-# Here we use pre-processed matlab file, which has already normalized to -1 to 1, with same spacing, same orientations.
-# The reason we do that is because it can save us time to processing the data on the fly. If you don't like it,
-# we provide the standard processing pipeline for nii.gz files below
-
-# --- replace the whole CustomDataset with this npz version ---
+# # Data processing for .npz files (contain {'image', 'label'})
+# Uses preprocessed .npz files with MRI/CT volumes normalized to [-1,1] range
+# This approach saves processing time compared to on-the-fly preprocessing
 
 from pathlib import Path
 from natsort import natsorted
@@ -188,8 +197,10 @@ class CustomDataset(Dataset):
         return img_tensor, label_tensor
 
 
-# # Data processing for nii files (including reading, adding channels, align orientation, align spacing, normalization (MRI and CT  has different normalization), cropping and padding, and finally extracing patches for training.
-# # But trust me, this process takes a lot of time. Try to process all the data before you run the model instead of processing them on-the-fly. At least try to get rid of the spacing and orientation.
+# Alternative: Data processing for .nii.gz files (commented out)
+# Includes reading, channel addition, orientation alignment, spacing alignment,
+# normalization (different for MRI vs CT), cropping, padding, and patch extraction.
+# Note: This approach is much slower - preprocessing to .npz files is recommended.
 
 
 # # Only be careful about the ResizeWithPadOrCropd. I am not sure should you use it or not. In my case,
@@ -299,7 +310,7 @@ class CustomDataset(Dataset):
 
 #         return img_tensor,label_tensor
 
-# # Build the MC-IDDPM process
+# Build the Gaussian Diffusion process
 
 
 
@@ -334,7 +345,7 @@ diffusion = create_gaussian_diffusion(
 schedule_sampler = UniformSampler(diffusion)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-# # Build the MC-IDDPM network
+# Build the SwinViT-based diffusion network
 
 
 
@@ -394,7 +405,7 @@ torch.set_float32_matmul_precision("high")
 optimizer = torch.optim.AdamW(A_to_B_model.parameters(), lr=2e-5,weight_decay = 1e-4)
 scaler = torch.cuda.amp.GradScaler()
 
-# # Build the training function. Run the training function once = one epoch
+# Build the training function - runs one epoch
 
 
 
@@ -451,7 +462,7 @@ def train(model, optimizer,data_loader1, loss_history, max_steps_per_epoch=None)
     print('Averaged loss is: '+ str(average_loss))
     return average_loss
 
-# # Build the testing function.
+# Build the evaluation function with sliding-window inference
 
 
 
@@ -537,7 +548,7 @@ def evaluate(model, epoch, out_dir, data_loader1, best_loss, save_outputs=False,
             scipy.io.savemat(os.path.join(out_dir, "all_final_test_another.mat"), data)
     return avg
 
-# # Start the training and testing
+# Start the training and evaluation loop
 
 training_path = os.path.join('SynthRAD', 'imagesTr')
 testing_path = os.path.join('SynthRAD', 'imagesTs')
