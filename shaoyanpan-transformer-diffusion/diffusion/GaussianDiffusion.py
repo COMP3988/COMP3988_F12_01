@@ -12,7 +12,7 @@ import numpy as np
 import torch as th
 import torch.nn.functional as F
 
-                
+
 def normal_kl(mean1, logvar1, mean2, logvar2):
     """
     Compute the KL divergence between two gaussians.
@@ -318,7 +318,7 @@ class GaussianDiffusion:
             x_input = th.cat([x,condition],dim=1)
         else:
             x_input = x
-        
+
         model_output = model(x_input, self._scale_timesteps(t), **model_kwargs)
 
         if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
@@ -823,14 +823,14 @@ class GaussianDiffusion:
             model_kwargs = {}
         if noise is None:
             noise = th.randn_like(x_start)
-            
+
 
         x_t = self.q_sample(x_start, t, noise=noise)
-        if condition_start is not None: 
+        if condition_start is not None:
             x_input = th.cat([x_t,condition_start],dim=1)
         else:
             x_input = x_t
-            
+
         terms = {}
 
         if self.loss_type == LossType.KL or self.loss_type == LossType.RESCALED_KL:
@@ -880,6 +880,7 @@ class GaussianDiffusion:
             assert model_output.shape == target.shape == x_start.shape
             #terms["mse"] = mean_flat((target - model_output) ** 2)
             terms["mse"] = th.nn.L1Loss()(target,model_output)
+
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:

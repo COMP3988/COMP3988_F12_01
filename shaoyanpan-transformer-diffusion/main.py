@@ -21,6 +21,10 @@ from tqdm.auto import tqdm
 parser = argparse.ArgumentParser()
 parser.add_argument("--epochs", type=int, default=20,
                     help="Number of epochs to train")
+parser.add_argument("--output_dir", default="./output",
+                    help="Output directory for checkpoints and logs")
+parser.add_argument("--data_dir", default="SynthRAD",
+                    help="Directory containing preprocessed NPZ files")
 args = parser.parse_args()
 
 # ^^^ MANUALLY ADDED ^^^
@@ -184,7 +188,7 @@ class CustomDataset(Dataset):
             mask_tensor  = out["mask"].to(torch.float) if "mask" in out else torch.ones_like(img_tensor)
         else:
             outs = self.train_transforms(sample)   # list of dicts (num_samples)
-            img   = np.zeros([patch_num, PATCH_SIZE[0], PATCH_SIZE[1], PATCH_SIZE[2]], dtype=np.float32)
+            img   = np.zeros([PATCH_NUM, PATCH_SIZE[0], PATCH_SIZE[1], PATCH_SIZE[2]], dtype=np.float32)
             label = np.zeros_like(img)
             mask  = np.zeros_like(img)
             for i, s in enumerate(outs):
@@ -383,13 +387,16 @@ def train(model, optimizer,data_loader1, loss_history, max_steps_per_epoch=None)
     total_time = 0
 
     #2: Loop the whole dataset, x1 (traindata) is the image batch
-    pbar = tqdm(data_loader1, total=len(data_loader1), desc=f"Train {epoch}")
+    pbar = tqdm(data_loader1, total=len(data_loader1), desc=f"Train {epoch}",
+                mininterval=5, maxinterval=30)  # Update at most once per 5 seconds
     for i, (x1,y1,mask1) in enumerate(pbar):
 
         if max_steps_per_epoch is not None and i >= max_steps_per_epoch:
             break
 
-        if i % 5 == 0 and A_to_B_loss_sum:
+        # Update progress bar less frequently (every 25% of batches)
+        total_batches = len(data_loader1)
+        if i % max(1, total_batches // 4) == 0 and A_to_B_loss_sum:
             pbar.set_postfix(avg_loss=float(np.nanmean(A_to_B_loss_sum)))
 
         traintarget = y1.view(-1,1,PATCH_SIZE[0],PATCH_SIZE[1],PATCH_SIZE[2]).to(device)
@@ -410,15 +417,36 @@ def train(model, optimizer,data_loader1, loss_history, max_steps_per_epoch=None)
         with torch.cuda.amp.autocast():
             all_loss = diffusion.training_losses(A_to_B_model,traintarget,traincondition, t)
 
+            # Debug: Print loss values at 25% intervals (disabled by default)
+            # Uncomment the next 3 lines to enable debug logging
+            # total_batches = len(data_loader1)
+            # if i % max(1, total_batches // 4) == 0:
+            #     progress_pct = (i / total_batches) * 100
+            #     print(f"Debug [{progress_pct:.0f}%] - Base loss: {all_loss['loss'].mean():.4f}, Range: [{all_loss['loss'].min():.4f}, {all_loss['loss'].max():.4f}]")
+            #     print(f"Debug [{progress_pct:.0f}%] - Target range: [{traintarget.min():.3f}, {traintarget.max():.3f}], Condition range: [{traincondition.min():.3f}, {traincondition.max():.3f}]")
+
             # Apply mask weighting to focus loss on anatomy regions
             # Mask values: 1 = anatomy, 0 = background
-            # Weight anatomy regions more heavily
-            mask_weight = 1.0 + 2.0 * trainmask  # 1.0 for background, 3.0 for anatomy
-            masked_loss = all_loss["loss"] * mask_weight.squeeze(1)
+            # Use more conservative weighting to avoid loss explosion
+            mask_weight = 1.0 + 0.5 * trainmask  # 1.0 for background, 1.5 for anatomy
+
+            # Ensure mask_weight has the same shape as the loss
+            # all_loss["loss"] is typically [batch_size] or [batch_size, ...]
+            # trainmask is [batch_size, 1, D, H, W]
+            if len(all_loss["loss"].shape) == 1:  # [batch_size]
+                # For scalar loss per sample, use mean of mask_weight per sample
+                mask_weight_per_sample = mask_weight.view(mask_weight.shape[0], -1).mean(dim=1)  # [batch_size]
+                masked_loss = all_loss["loss"] * mask_weight_per_sample
+            else:
+                # For per-pixel loss, broadcast mask_weight to match loss shape
+                masked_loss = all_loss["loss"] * mask_weight.squeeze(1)
 
             A_to_B_loss = (masked_loss * weights).mean()
 
-            A_to_B_loss_sum.append(all_loss["loss"].mean().detach().cpu().numpy())
+            # Clip very large losses to avoid skewing the average
+            current_loss = all_loss["loss"].mean().detach().cpu().numpy()
+            clipped_loss = min(current_loss, 10.0)  # Clip any loss > 10
+            A_to_B_loss_sum.append(clipped_loss)
 
         scaler.scale(A_to_B_loss).backward()
 
@@ -506,9 +534,20 @@ def evaluate(model, epoch, out_dir, data_loader1, best_loss, save_outputs=False,
             sampled = eval_inferer(condition, lambda c, m: diffusion_sampling_with(eval_diffusion, c, m), model)
 
             # Apply mask weighting to evaluation loss
-            mask_weight = 1.0 + 2.0 * mask  # 1.0 for background, 3.0 for anatomy
-            masked_loss = metric(sampled, target) * mask_weight
-            loss = masked_loss.mean()
+            mask_weight = 1.0 + 0.5 * mask  # 1.0 for background, 1.5 for anatomy
+
+            # Calculate base loss
+            base_loss = metric(sampled, target)
+
+            # Apply mask weighting - ensure shapes match
+            if len(base_loss.shape) == 0:  # Scalar loss
+                # Use mean mask weight for the entire volume
+                mask_weight_mean = mask_weight.mean()
+                loss = base_loss * mask_weight_mean
+            else:
+                # For per-pixel loss, ensure broadcasting works
+                masked_loss = base_loss * mask_weight
+                loss = masked_loss.mean()
 
             loss_all.append(loss.detach().cpu().numpy())
 
@@ -530,8 +569,8 @@ def evaluate(model, epoch, out_dir, data_loader1, best_loss, save_outputs=False,
 
 # Start the training and evaluation loop
 
-training_path = os.path.join('SynthRAD', 'imagesTr')
-testing_path = os.path.join('SynthRAD', 'imagesTs')
+training_path = os.path.join(args.data_dir, 'imagesTr')
+testing_path = os.path.join(args.data_dir, 'imagesTs')
 
 training_set1 = CustomDataset(training_path, train_flag=True)
 testing_set1 = CustomDataset(testing_path, train_flag=False)
@@ -555,12 +594,16 @@ test_loader1 = torch.utils.data.DataLoader(testing_set1, **test_params)
 N_EPOCHS = args.epochs
 
 # Enter the address you save the checkpoint and the evaluation examples
-checkpoint_dir = 'synthRAD_checkpoints'
+checkpoint_dir = os.path.join(args.output_dir, 'checkpoints')
 
 os.makedirs(checkpoint_dir, exist_ok=True)
 A_to_B_PATH = os.path.join(checkpoint_dir, 'Synth_A_to_B.pth')
 LATEST_PATH = os.path.join(checkpoint_dir, 'latest_checkpoint.pth')
 best_loss = float('inf')
+
+print(f"📁 Checkpoints will be saved to: {checkpoint_dir}")
+print(f"📁 Training data from: {training_path}")
+print(f"📁 Testing data from: {testing_path}")
 
 train_loss_history, test_loss_history = [], []
 
@@ -568,7 +611,7 @@ train_loss_history, test_loss_history = [], []
 start_epoch = 0
 if os.path.exists(LATEST_PATH):
     print(f"Resuming from checkpoint: {LATEST_PATH}")
-    checkpoint = torch.load(LATEST_PATH)
+    checkpoint = torch.load(LATEST_PATH, weights_only=False)
     A_to_B_model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     start_epoch = checkpoint['epoch'] + 1

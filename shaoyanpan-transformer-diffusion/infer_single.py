@@ -144,7 +144,7 @@ def main():
 
     # Build model
     model = build_model(device)
-    ckpt = torch.load(args.ckpt, map_location=device)
+    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
     state = ckpt.get("state_dict", ckpt)
     model.load_state_dict(state, strict=False)
     model.eval()
