@@ -28,9 +28,6 @@ def calculate_metrics(generated, ground_truth):
     mae_score = np.mean(np.abs(ground_truth - generated))
     return {'ssim': ssim_score, 'psnr': psnr_score, 'mae': mae_score}
 
-
-# --- SET UP ---
-
 # Initialise model and diffusion framework.
 model = Unet(dim=64, dim_mults=(1, 2, 4, 8), channels=2)
 diffusion = GaussianDiffusion(model, image_size=128, timesteps=1000)
@@ -41,8 +38,6 @@ diffusion.load_state_dict(torch.load(trained_model_path))
 
 # Load the dataset.
 dataset = SynthRADDataset(root_dir='data/synthrad_train', image_size=128)
-
-# --- EVALUATION LOOP ---
 
 num_eval_samples = 3
 all_metrics = {'ssim': [], 'psnr': [], 'mae': []}
@@ -62,10 +57,13 @@ for i in range(num_eval_samples):
 
     # Calculate and store metrics for this sample.
     metrics = calculate_metrics(generated_np, ground_truth_np)
+    print("\n--- SINGLE SAMPLE EVALUATION METRICS ---")
+    print(f"SSIM: {metrics['ssim']:.4f}")
+    print(f"PSNR: {metrics['psnr']:.2f} dB")
+    print(f"MAE:  {metrics['mae']:.4f}")
+    print("----------------------------------------\n")
     for key in all_metrics:
         all_metrics[key].append(metrics[key])
-
-# --- REPORT RESULTS ---
 
 print("\n--- AVERAGE EVALUATION METRICS ---")
 print(f"SSIM: {np.mean(all_metrics['ssim']):.4f} (+/- {np.std(all_metrics['ssim']):.4f})")

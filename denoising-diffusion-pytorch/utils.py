@@ -30,3 +30,25 @@ def generate_conditional_ct(diffusion_model, mri_tensor):
     # The final denoised image is in x_t
     generated_ct = x_t[:, 1, :, :].unsqueeze(1)
     return generated_ct
+
+
+def generate_conditional_ct_fast(diffusion_model, mri_tensor, steps=50):
+    diffusion_model.eval()
+    device = mri_tensor.device
+
+    noise_channel = torch.randn_like(mri_tensor)
+    x_t = torch.cat([mri_tensor, noise_channel], dim=1)
+
+    # create evenly spaced timesteps as ints
+    times = list(map(int, torch.linspace(0, diffusion_model.num_timesteps-1, steps=steps).tolist()))
+    times.reverse()  # reverse to start from T -> 0
+
+    for t in tqdm(times, desc='Conditional sampling (fast)', total=steps):
+        with torch.no_grad():
+            x_t, _ = diffusion_model.p_sample(x_t, t)  # <-- unpack tuple
+
+        # guidance: re-insert MRI at each step
+        x_t = torch.cat([mri_tensor, x_t[:, 1, :, :].unsqueeze(1)], dim=1)
+
+    generated_ct = x_t[:, 1, :, :].unsqueeze(1)
+    return generated_ct
