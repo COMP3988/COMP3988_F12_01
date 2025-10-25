@@ -8,6 +8,9 @@ from torchvision import transforms
 import numpy as np
 import SimpleITK as sitk
 from pathlib import Path
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'shaoyanpan-transformer-diffusion'))
+from preprocess_utils import preprocess_mri, preprocess_ct
 
 class SimpleTestDataset(Dataset):
     """
@@ -130,8 +133,8 @@ class SynthRAD2025Dataset(Dataset):
         ct_tensor = torch.from_numpy(ct_array)
 
         # Normalize to [-1, 1] range
-        mri_tensor = self._normalize_tensor(mri_tensor)
-        ct_tensor = self._normalize_tensor(ct_tensor)
+        mri_tensor = self._normalize_tensor(mri_tensor, is_ct=False)
+        ct_tensor = self._normalize_tensor(ct_tensor, is_ct=True)
 
         # Add batch and channel dimensions if needed
         if len(mri_tensor.shape) == 3:  # [D, H, W]
@@ -140,17 +143,18 @@ class SynthRAD2025Dataset(Dataset):
 
         return mri_tensor, ct_tensor
 
-    def _normalize_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Normalize tensor to [-1, 1] range."""
-        tensor_min = tensor.min()
-        tensor_max = tensor.max()
+    def _normalize_tensor(self, tensor: torch.Tensor, is_ct: bool = False) -> torch.Tensor:
+        """Normalize tensor to [-1, 1] range using standardized preprocessing."""
+        tensor_np = tensor.numpy()
 
-        if tensor_max > tensor_min:
-            tensor = (tensor - tensor_min) / (tensor_max - tensor_min) * 2 - 1
+        if is_ct:
+            # Use CT preprocessing (HU range clipping)
+            tensor_preprocessed = preprocess_ct(tensor_np)
         else:
-            tensor = torch.zeros_like(tensor)
+            # Use MRI preprocessing (percentile-based normalization)
+            tensor_preprocessed = preprocess_mri(tensor_np)
 
-        return tensor
+        return torch.from_numpy(tensor_preprocessed)
 
 
 class SynthRADTask1Dataset(Dataset):
@@ -253,8 +257,8 @@ class SynthRADTask1Dataset(Dataset):
         ct_tensor = torch.from_numpy(ct_array)
 
         # Normalize to [-1, 1] range
-        mri_tensor = self._normalize_tensor(mri_tensor)
-        ct_tensor = self._normalize_tensor(ct_tensor)
+        mri_tensor = self._normalize_tensor(mri_tensor, is_ct=False)
+        ct_tensor = self._normalize_tensor(ct_tensor, is_ct=True)
 
         # Add batch and channel dimensions if needed
         if len(mri_tensor.shape) == 3:  # [D, H, W]
@@ -263,17 +267,18 @@ class SynthRADTask1Dataset(Dataset):
 
         return mri_tensor, ct_tensor
 
-    def _normalize_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Normalize tensor to [-1, 1] range."""
-        tensor_min = tensor.min()
-        tensor_max = tensor.max()
+    def _normalize_tensor(self, tensor: torch.Tensor, is_ct: bool = False) -> torch.Tensor:
+        """Normalize tensor to [-1, 1] range using standardized preprocessing."""
+        tensor_np = tensor.numpy()
 
-        if tensor_max > tensor_min:
-            tensor = (tensor - tensor_min) / (tensor_max - tensor_min) * 2 - 1
+        if is_ct:
+            # Use CT preprocessing (HU range clipping)
+            tensor_preprocessed = preprocess_ct(tensor_np)
         else:
-            tensor = torch.zeros_like(tensor)
+            # Use MRI preprocessing (percentile-based normalization)
+            tensor_preprocessed = preprocess_mri(tensor_np)
 
-        return tensor
+        return torch.from_numpy(tensor_preprocessed)
 
 
 class SynthRADTestDataset(Dataset):

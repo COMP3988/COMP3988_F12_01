@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).parent.parent / "shaoyanpan-transformer-diffu
 from unet.model.unet_model import UNet
 from pix2pix.models.pix2pix_model import Pix2PixModel
 from pix2pix.models.cycle_gan_model import CycleGANModel
+from preprocess_utils import postprocess_ct_output
 
 class ModelAdapter:
     """
@@ -199,6 +200,13 @@ class TransformerDiffusionAdapter:
             # Remove extra depth dimension if input was 2D
             if len(mri_image.shape) == 5 and mri_image.shape[2] == 1:
                 generated_ct = generated_ct.squeeze(2)  # [B, 1, H, W]
+
+            # Postprocess CT output from [-1, 1] back to HU units
+            # Convert to numpy for postprocessing
+            generated_ct_np = generated_ct.detach().cpu().numpy()
+            generated_ct_np = postprocess_ct_output(generated_ct_np)
+            # Convert back to tensor
+            generated_ct = torch.from_numpy(generated_ct_np).to(self.device)
 
         return generated_ct
 
