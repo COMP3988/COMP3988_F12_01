@@ -9,7 +9,7 @@ import numpy as np
 from collections import defaultdict
 from preprocess_utils import preprocess_mri, preprocess_ct
 
-def preprocess_synthrad(synthrad_location, out_dir, seed, proportion):
+def preprocess_synthrad(synthrad_location, out_dir, seed, proportion, reverse_order=True):
     os.makedirs(out_dir, exist_ok=True)
     random.seed(seed)
 
@@ -39,13 +39,30 @@ def preprocess_synthrad(synthrad_location, out_dir, seed, proportion):
         train += a; val += b; test += c
 
     pat_i = 1
+    processed_count = 0
+    skipped_count = 0
+
     def handle_one(tag, lst):
         subdir = os.path.join(out_dir, f"images{tag}")
         os.makedirs(subdir, exist_ok=True)
-        nonlocal pat_i
+        nonlocal pat_i, processed_count, skipped_count
+
+        # Reverse order for parallel processing (if enabled)
+        if reverse_order:
+            lst = list(reversed(lst))
+
         for patient_path in lst:
             patient_code = os.path.basename(patient_path)
+            out_path = os.path.join(subdir, f"{patient_code}.npz")
+
+            # Skip if file already exists
+            if os.path.exists(out_path):
+                print(f"[{pat_i}/{len(mri_files)}] Skipping {patient_code} (already exists)"); pat_i += 1
+                skipped_count += 1
+                continue
+
             print(f"[{pat_i}/{len(mri_files)}] Processing {patient_code}"); pat_i += 1
+            processed_count += 1
 
             mr = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(patient_path, "mr.mha"))).astype(np.float32)
             ct = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(patient_path, "ct.mha"))).astype(np.float32)
@@ -56,7 +73,6 @@ def preprocess_synthrad(synthrad_location, out_dir, seed, proportion):
             ct = preprocess_ct(ct)
             # Mask doesn't need preprocessing - keep as binary 0/1
 
-            out_path = os.path.join(subdir, f"{patient_code}.npz")
             np.savez_compressed(out_path,
                               image=mr.astype(np.float32),
                               label=ct.astype(np.float32),
@@ -64,6 +80,7 @@ def preprocess_synthrad(synthrad_location, out_dir, seed, proportion):
 
     handle_one("Tr", train); handle_one("Val", val); handle_one("Ts", test)
     print(f"Finished preprocessing. Saved NPZ pairs to {out_dir}")
+    print(f"Summary: {processed_count} files processed, {skipped_count} files skipped (already existed)")
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
@@ -71,5 +88,7 @@ if __name__ == "__main__":
     p.add_argument("--out_dir", default="SynthRAD", help="Output directory for NPZ files")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--proportion", type=float, default=1.0)
+    p.add_argument("--reverse_order", action="store_true", default=True, help="Process files in reverse order for parallelization")
+    p.add_argument("--no_reverse_order", action="store_false", dest="reverse_order", help="Process files in normal order")
     args = p.parse_args()
-    preprocess_synthrad(args.synthrad_location, args.out_dir, args.seed, args.proportion)
+    preprocess_synthrad(args.synthrad_location, args.out_dir, args.seed, args.proportion, args.reverse_order)
