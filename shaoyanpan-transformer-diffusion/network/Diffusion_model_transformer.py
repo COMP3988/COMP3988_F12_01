@@ -63,19 +63,19 @@ class Upsample(nn.Module):
         if dims == 3:
             self.sample_kernel=(sample_kernel[0],sample_kernel[1],sample_kernel[2])
         else:
-            self.sample_kernel=(sample_kernel[0],sample_kernel[1])            
+            self.sample_kernel=(sample_kernel[0],sample_kernel[1])
         self.dims = dims
         if use_conv:
             self.conv = conv_nd(dims, self.channels, self.out_channels, 3, padding=1)
         else:
             self.up = th.nn.Upsample(scale_factor=self.sample_kernel,mode='nearest')
             self.conv = conv_nd(dims, self.channels, self.channels, 3, padding=1)
-            
+
     def forward(self, x):
         assert x.shape[1] == self.channels
         x = self.up(x)
         x = self.conv(x)
-        
+
         # if self.dims == 3:
         #     x = F.interpolate(
         #         x, scale_factor=self.sample_kernel, mode="nearest"
@@ -178,14 +178,14 @@ class ResBlock(TimestepBlock):
             self.x_upd = Downsample(channels, False,sample_kernel, dims)
         else:
             self.h_upd = self.x_upd = nn.Identity()
-            
+
         if use_swin:
             self.in_layers = nn.Sequential(
                 normalization(channels),
                 nn.SiLU(),
                 conv_nd(dims, channels, self.out_channels, 3, padding=1),
                     )
-            
+
             self.shift_size = tuple(i // 2 for i in window_size)
             self.no_shift = tuple(0 for i in window_size)
             self.swin_layer = nn.ModuleList([
@@ -222,7 +222,7 @@ class ResBlock(TimestepBlock):
                         conv_nd(dims, self.out_channels, self.out_channels, 3, padding=1)
                     ),
                 )
-            
+
         self.emb_layers = nn.Sequential(
             nn.SiLU(),
             linear(
@@ -356,11 +356,11 @@ class SwinVITModel(nn.Module):
         self.num_heads = num_heads
         self.num_head_channels = num_head_channels
         self.num_heads_upsample = num_heads_upsample
-        self.sample_kernel = sample_kernel[0]
+        self.sample_kernel = sample_kernel
         spatial_dims = dims
         drop_path = [x.item() for x in th.linspace(0, dropout, len(channel_mult))]
-        
-        
+
+
         time_embed_dim = model_channels * 4
         self.time_embed = nn.Sequential(
             linear(model_channels, time_embed_dim),
@@ -573,7 +573,7 @@ class SwinVITModel(nn.Module):
 
         null_logits = self.forward(*args, null_cond_prob = 1., **kwargs)
         return null_logits + (logits - null_logits) * cond_scale
-    
+
     def forward(self, x, timesteps,cond = None,null_cond_prob = 0., y=None):
         """
         Apply the model to an input batch.

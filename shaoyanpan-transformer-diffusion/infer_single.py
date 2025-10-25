@@ -28,6 +28,9 @@ import torch
 from monai.inferers import SlidingWindowInferer
 import SimpleITK as sitk
 
+# Import configuration
+from config import *
+
 # Model + diffusion imports from this repo
 from diffusion.Create_diffusion import create_gaussian_diffusion
 from diffusion.resampler import UniformSampler  # not used directly but kept for parity
@@ -43,81 +46,41 @@ def parse_args():
     p.add_argument("--output", required=True, help="Output .mha file path")
 
     # recommended defaults / flags
-    p.add_argument("--steps", type=int, default=2, help="Diffusion steps at inference (timestep_respacing)")
-    p.add_argument("--overlap", type=float, default=0.50, help="Sliding-window overlap [0,1)")
-    p.add_argument("--sw-batch", type=int, default=8, help="Sliding-window batch size")
+    p.add_argument("--steps", type=int, default=DEFAULT_INFERENCE_STEPS, help="Diffusion steps at inference (timestep_respacing)")
+    p.add_argument("--overlap", type=float, default=DEFAULT_OVERLAP, help="Sliding-window overlap [0,1)")
+    p.add_argument("--sw-batch", type=int, default=DEFAULT_SW_BATCH, help="Sliding-window batch size")
     p.add_argument("--ref-mha", type=str, default=None, help="Optional reference .mha to copy geometry when .npz lacks metadata")
     p.add_argument("--fp16", action="store_true", help="Enable autocast float16")
     p.add_argument("--device", default="cuda:0", help="Device, e.g., cuda:0 or cpu")
-    return p.parse_args()
+    p.add_argument("--sanity", action="store_true", help="Use minimal settings for quick testing (steps=2, overlap=0, sw-batch=1)")
 
+    args = p.parse_args()
 
-# Hyperparameters copied from training script
-num_channels=64
-attention_resolutions="32,16,8"
-channel_mult = (1, 2, 3, 4)
-num_heads=[4,4,8,16]
-window_size = [[4,4,2],[4,4,2],[4,4,2],[4,4,2]]
-num_res_blocks = [1,1,1,1]
-sample_kernel=([2,2,2],[2,2,1],[2,2,1],[2,2,1]),  # keep trailing comma to match training
-attention_ds = [int(x) for x in attention_resolutions.split(",")]
+    # Apply sanity mode overrides
+    if args.sanity:
+        args.steps = 2
+        args.overlap = 0.0
+        args.sw_batch = 1
+        print("Sanity mode enabled: Using minimal computational settings for quick testing")
+        print(f"  - Steps: {args.steps}")
+        print(f"  - Overlap: {args.overlap}")
+        print(f"  - Sliding window batch size: {args.sw_batch}")
+
+    return args
 
 # ---------------- config (match training) ----------------
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-img_size   = (256,256,128)
-patch_size = (64,64,2)
-patch_num  = 1
-
-# Diffusion hyperparams copied from training script
-DIFFUSION_STEPS = 1000
-LEARN_SIGMA = True
-SIGMA_SMALL = False
-NOISE_SCHEDULE = "linear"
-USE_KL = False
-PREDICT_XSTART = True
-RESCALE_TIMESTEPS = True
-RESCALE_LEARNED_SIGMAS = True
+device = get_device()
 
 
 def build_model(device: torch.device) -> torch.nn.Module:
-    attention_ds = [int(r) for r in attention_resolutions.split(",")]
-    model = SwinVITModel(
-        image_size=patch_size,
-        in_channels=2,
-        model_channels=num_channels,
-        out_channels=2,
-        dims=3,
-        sample_kernel=sample_kernel,
-        num_res_blocks=num_res_blocks,
-        attention_resolutions=tuple(attention_ds),
-        dropout=0,
-        channel_mult=channel_mult,
-        num_classes=None,
-        use_checkpoint=False,
-        use_fp16=False,
-        num_heads=num_heads,
-        window_size=window_size,
-        num_head_channels=64,
-        num_heads_upsample=-1,
-        use_scale_shift_norm=True,
-        resblock_updown=False,
-        use_new_attention_order=False,
-    ).to(device)
+    model = SwinVITModel(**get_model_config()).to(device)
     return model
 
 
 def build_diffusion(steps: int):
-    return create_gaussian_diffusion(
-        steps=DIFFUSION_STEPS,
-        learn_sigma=LEARN_SIGMA,
-        sigma_small=SIGMA_SMALL,
-        noise_schedule=NOISE_SCHEDULE,
-        use_kl=USE_KL,
-        predict_xstart=PREDICT_XSTART,
-        rescale_timesteps=RESCALE_TIMESTEPS,
-        rescale_learned_sigmas=RESCALE_LEARNED_SIGMAS,
-        timestep_respacing=[steps],
-    )
+    config = get_diffusion_config()
+    config['timestep_respacing'] = [steps]
+    return create_gaussian_diffusion(**config)
 
 
 def diffusion_sampling_with(diffusion_obj, condition, model):
@@ -188,7 +151,7 @@ def main():
     # Diffusion + inferer
     eval_diffusion = build_diffusion(args.steps)
     inferer = SlidingWindowInferer(
-        roi_size=patch_size,
+        roi_size=PATCH_SIZE,
         sw_batch_size=args.sw_batch,
         overlap=args.overlap,
         mode="constant",
