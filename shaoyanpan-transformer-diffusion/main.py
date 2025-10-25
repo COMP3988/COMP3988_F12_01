@@ -559,25 +559,56 @@ checkpoint_dir = 'synthRAD_checkpoints'
 
 os.makedirs(checkpoint_dir, exist_ok=True)
 A_to_B_PATH = os.path.join(checkpoint_dir, 'Synth_A_to_B.pth')
+LATEST_PATH = os.path.join(checkpoint_dir, 'latest_checkpoint.pth')
 best_loss = float('inf')
 
 train_loss_history, test_loss_history = [], []
 
-# Uncomment this when you resume the checkpoint
-A_to_B_model.load_state_dict(torch.load(A_to_B_PATH),strict=False)
-for epoch in range(0, N_EPOCHS):
+# Check if we're resuming from a checkpoint
+start_epoch = 0
+if os.path.exists(LATEST_PATH):
+    print(f"Resuming from checkpoint: {LATEST_PATH}")
+    checkpoint = torch.load(LATEST_PATH)
+    A_to_B_model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    start_epoch = checkpoint['epoch'] + 1
+    best_loss = checkpoint['best_loss']
+    train_loss_history = checkpoint.get('train_loss_history', [])
+    test_loss_history = checkpoint.get('test_loss_history', [])
+    print(f"Resumed from epoch {start_epoch}, best_loss: {best_loss:.6f}")
+else:
+    print("Starting training from scratch")
+for epoch in range(start_epoch, N_EPOCHS):
     print('Epoch:', epoch)
     start_time = time.time()
     train(A_to_B_model, optimizer,train_loader1, train_loss_history)
     print('Execution time:', '{:5.2f}'.format(time.time() - start_time), 'seconds')
+
+    # Save checkpoint every epoch (for safety)
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': A_to_B_model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'best_loss': best_loss,
+        'train_loss_history': train_loss_history,
+        'test_loss_history': test_loss_history,
+    }
+    torch.save(checkpoint, LATEST_PATH)
+    print(f"Saved checkpoint for epoch {epoch}")
+
     if epoch % 5 == 0:
         print("Starting eval...")
         average_loss = evaluate(A_to_B_model, epoch, checkpoint_dir, test_loader1, best_loss,
                 save_outputs=False, max_batches=1, eval_steps=EVAL_STEPS, eval_overlap=EVAL_OVERLAP, eval_sw_batch=EVAL_SW_BATCH)
         print("Eval done.")
+        test_loss_history.append(average_loss)
+
         if average_loss < best_loss:
             print('Save the latest best model')
             torch.save(A_to_B_model.state_dict(), A_to_B_PATH)
             best_loss = average_loss
+            # Also save the best checkpoint
+            checkpoint['best_loss'] = best_loss
+            torch.save(checkpoint, os.path.join(checkpoint_dir, 'best_checkpoint.pth'))
 
 print('Execution time')
