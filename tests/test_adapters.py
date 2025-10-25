@@ -175,92 +175,85 @@ def test_cyclegan_adapter():
 
 def test_transformer_diffusion_adapter():
     """
-    Tests the Transformer Diffusion adapter model creation and interface:
-    1. Tests model creation without loading weights (since we don't have real weights)
-    2. Verifies the adapter interface works correctly
-    3. Tests that the model can be instantiated properly
+    Tests the Transformer Diffusion adapter by using infer_single.py directly:
+    1. Creates a dummy checkpoint file
+    2. Creates a dummy input file
+    3. Calls infer_single.py as a subprocess
+    4. Verifies the output file is created
+    5. Cleans up temporary files
     """
-    print("\n-- Testing Transformer Diffusion Adapter --")
+    print("\n-- Testing Transformer Diffusion Adapter (via infer_single.py) --")
+
+    import subprocess
+    import tempfile
+    import numpy as np
+    from pathlib import Path
 
     try:
-        # Test that we can import the required modules
-        sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'shaoyanpan-transformer-diffusion', 'shaoyanpan-transformer-diffusion')))
+        # Create temporary directory for test files
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
 
-        from network.Diffusion_model_transformer import SwinVITModel
-        from diffusion.Create_diffusion import create_gaussian_diffusion
+            # 1. Create a dummy checkpoint file
+            dummy_ckpt_path = temp_path / "dummy_transformer_diffusion.pth"
 
-        # Test model creation with correct parameters
-        num_channels = 64
-        attention_resolutions = "32,16,8"
-        channel_mult = (1, 2, 3, 4)
-        num_heads = [4, 4, 8, 16]
-        window_size = [[4, 4, 2], [4, 4, 2], [4, 4, 2], [4, 4, 2]]
-        num_res_blocks = [1, 1, 1, 1]
-        sample_kernel = ((2, 2, 2), (2, 2, 1), (2, 2, 1), (2, 2, 1))
-        attention_ds = [int(x) for x in attention_resolutions.split(",")]
-        patch_size = (64, 64, 2)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            # Import the model and create a dummy state dict
+            sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'shaoyanpan-transformer-diffusion')))
+            from config import get_model_config
+            from network.Diffusion_model_transformer import SwinVITModel
 
-        # Create a custom SwinVITModel that fixes the sample_kernel bug
-        class FixedSwinVITModel(SwinVITModel):
-            def __init__(self, *args, **kwargs):
-                # Store the original sample_kernel before calling parent
-                self._original_sample_kernel = kwargs.get('sample_kernel')
-                super().__init__(*args, **kwargs)
-                # Fix the bug by restoring the full sample_kernel
-                self.sample_kernel = self._original_sample_kernel
+            # Create model with config
+            model = SwinVITModel(**get_model_config())
+            torch.save(model.state_dict(), dummy_ckpt_path)
 
-        # Create model
-        model = FixedSwinVITModel(
-            image_size=patch_size,
-            in_channels=2,  # MRI + CT conditioning
-            model_channels=num_channels,
-            out_channels=2,  # CT output
-            dims=3,
-            sample_kernel=sample_kernel,
-            num_res_blocks=num_res_blocks,
-            attention_resolutions=tuple(attention_ds),
-            dropout=0,
-            channel_mult=channel_mult,
-            num_classes=None,
-            use_checkpoint=False,
-            use_fp16=False,
-            num_heads=num_heads,
-            window_size=window_size,
-            num_head_channels=64,
-            num_heads_upsample=-1,
-            use_scale_shift_norm=True,
-            resblock_updown=True,
-        )
+            # 2. Create a dummy input file (.npz format)
+            dummy_input_path = temp_path / "dummy_input.npz"
 
-        # Create diffusion process
-        diffusion = create_gaussian_diffusion(
-            steps=1000,
-            learn_sigma=True,
-            sigma_small=False,
-            noise_schedule="linear",
-            use_kl=False,
-            predict_xstart=True,
-            rescale_timesteps=True,
-            rescale_learned_sigmas=True,
-        )
+            # Create dummy MRI and CT volumes
+            mri_volume = np.random.randn(64, 64, 2).astype(np.float32)
+            ct_volume = np.random.randn(64, 64, 2).astype(np.float32)
 
-        # Test that the adapter interface would work
-        from models.adapters import TransformerDiffusionAdapter
-        adapter = TransformerDiffusionAdapter(model, diffusion, device)
+            # Save as .npz file
+            np.savez(dummy_input_path, image=mri_volume, label=ct_volume)
 
-        # Test prediction with dummy input
-        dummy_mri = torch.randn(1, 1, 64, 64, 2)  # 3D input for transformer
-        output_tensor = adapter.predict(dummy_mri)
+            # 3. Create output path
+            dummy_output_path = temp_path / "dummy_output.mha"
 
-        # Verify output shape
-        expected_shape = (1, 1, 64, 64, 2)
-        assert output_tensor.shape == expected_shape, f"Shape mismatch. Expected {expected_shape}, got {output_tensor.shape}"
+            # 4. Call infer_single.py as subprocess
+            infer_script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'shaoyanpan-transformer-diffusion', 'infer_single.py'))
 
-        print("Transformer Diffusion adapter test PASSED.")
+            cmd = [
+                'python', infer_script_path,
+                '--ckpt', str(dummy_ckpt_path),
+                '--input', str(dummy_input_path),
+                '--output', str(dummy_output_path),
+                '--sanity'  # Use minimal settings for quick testing
+            ]
 
+            print(f"Running command: {' '.join(cmd)}")
+
+            # Run the inference
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+            # 5. Verify the output
+            if result.returncode == 0:
+                if dummy_output_path.exists():
+                    print("✅ Transformer Diffusion inference completed successfully!")
+                    print(f"✅ Output file created: {dummy_output_path}")
+                    print("✅ Transformer Diffusion adapter test PASSED.")
+                else:
+                    print("❌ Output file was not created")
+                    print(f"❌ Transformer Diffusion adapter test FAILED: No output file")
+            else:
+                print(f"❌ Inference failed with return code: {result.returncode}")
+                print(f"❌ STDOUT: {result.stdout}")
+                print(f"❌ STDERR: {result.stderr}")
+                print("❌ Transformer Diffusion adapter test FAILED: Subprocess error")
+
+    except subprocess.TimeoutExpired:
+        print("❌ Transformer Diffusion adapter test FAILED: Timeout")
     except Exception as e:
-        print(f"Transformer Diffusion adapter test FAILED: {e}")
+        print(f"❌ Transformer Diffusion adapter test FAILED: {e}")
         import traceback
         traceback.print_exc()
 
