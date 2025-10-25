@@ -154,15 +154,15 @@ class CustomDataset(Dataset):
             raise FileNotFoundError(f"No .npz files under {self.data_path}")
 
         self.train_transforms = Compose([
-            EnsureChannelFirstd(keys=["image","label"], channel_dim="no_channel"),
-            ResizeWithPadOrCropd(keys=["image","label"], spatial_size=IMG_SIZE, constant_values=-1),
-            RandSpatialCropSamplesd(keys=["image","label"], roi_size=PATCH_SIZE, num_samples=PATCH_NUM, random_size=False),
-            EnsureTyped(keys=["image","label"]),
+            EnsureChannelFirstd(keys=["image","label","mask"], channel_dim="no_channel"),
+            ResizeWithPadOrCropd(keys=["image","label","mask"], spatial_size=IMG_SIZE, constant_values=-1),
+            RandSpatialCropSamplesd(keys=["image","label","mask"], roi_size=PATCH_SIZE, num_samples=PATCH_NUM, random_size=False),
+            EnsureTyped(keys=["image","label","mask"]),
         ])
         self.test_transforms = Compose([
-            EnsureChannelFirstd(keys=["image","label"], channel_dim="no_channel"),
-            ResizeWithPadOrCropd(keys=["image","label"], spatial_size=IMG_SIZE, constant_values=-1),
-            EnsureTyped(keys=["image","label"]),
+            EnsureChannelFirstd(keys=["image","label","mask"], channel_dim="no_channel"),
+            ResizeWithPadOrCropd(keys=["image","label","mask"], spatial_size=IMG_SIZE, constant_values=-1),
+            EnsureTyped(keys=["image","label","mask"]),
         ])
 
     def __len__(self):
@@ -173,24 +173,29 @@ class CustomDataset(Dataset):
         with np.load(f) as d:
             mri  = d["image"].astype(np.float32)
             ct   = d["label"].astype(np.float32)
+            mask = d["mask"].astype(np.float32) if "mask" in d else np.ones_like(mri)
 
-        sample = {"image": mri, "label": ct}
+        sample = {"image": mri, "label": ct, "mask": mask}
 
         if not self.train_flag:
             out = self.test_transforms(sample)
             img_tensor   = out["image"].to(torch.float)
             label_tensor = out["label"].to(torch.float)
+            mask_tensor  = out["mask"].to(torch.float) if "mask" in out else torch.ones_like(img_tensor)
         else:
             outs = self.train_transforms(sample)   # list of dicts (num_samples)
-            img   = np.zeros([patch_num, patch_size[0], patch_size[1], patch_size[2]], dtype=np.float32)
+            img   = np.zeros([patch_num, PATCH_SIZE[0], PATCH_SIZE[1], PATCH_SIZE[2]], dtype=np.float32)
             label = np.zeros_like(img)
+            mask  = np.zeros_like(img)
             for i, s in enumerate(outs):
                 img[i]   = s["image"]
                 label[i] = s["label"]
+                mask[i]  = s["mask"] if "mask" in s else np.ones_like(s["image"])
             img_tensor   = torch.from_numpy(img).unsqueeze(1)    # [N,1,D,H,W]
             label_tensor = torch.from_numpy(label).unsqueeze(1)
+            mask_tensor  = torch.from_numpy(mask).unsqueeze(1)
 
-        return img_tensor, label_tensor
+        return img_tensor, label_tensor, mask_tensor
 
 
 # Alternative: Data processing for .nii.gz files (commented out)
@@ -379,7 +384,7 @@ def train(model, optimizer,data_loader1, loss_history, max_steps_per_epoch=None)
 
     #2: Loop the whole dataset, x1 (traindata) is the image batch
     pbar = tqdm(data_loader1, total=len(data_loader1), desc=f"Train {epoch}")
-    for i, (x1,y1) in enumerate(pbar):
+    for i, (x1,y1,mask1) in enumerate(pbar):
 
         if max_steps_per_epoch is not None and i >= max_steps_per_epoch:
             break
@@ -391,6 +396,9 @@ def train(model, optimizer,data_loader1, loss_history, max_steps_per_epoch=None)
 
         traincondition = x1.view(-1,1,PATCH_SIZE[0],PATCH_SIZE[1],PATCH_SIZE[2]).to(device)
 
+        # Apply mask weighting to focus on anatomy
+        trainmask = mask1.view(-1,1,PATCH_SIZE[0],PATCH_SIZE[1],PATCH_SIZE[2]).to(device)
+
         #3: extract random timestep for training
         t, weights = schedule_sampler.sample(traincondition.shape[0], device)
 
@@ -401,7 +409,14 @@ def train(model, optimizer,data_loader1, loss_history, max_steps_per_epoch=None)
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
             all_loss = diffusion.training_losses(A_to_B_model,traintarget,traincondition, t)
-            A_to_B_loss = (all_loss["loss"] * weights).mean()
+
+            # Apply mask weighting to focus loss on anatomy regions
+            # Mask values: 1 = anatomy, 0 = background
+            # Weight anatomy regions more heavily
+            mask_weight = 1.0 + 2.0 * trainmask  # 1.0 for background, 3.0 for anatomy
+            masked_loss = all_loss["loss"] * mask_weight.squeeze(1)
+
+            A_to_B_loss = (masked_loss * weights).mean()
 
             A_to_B_loss_sum.append(all_loss["loss"].mean().detach().cpu().numpy())
 
@@ -436,7 +451,7 @@ def train(model, optimizer,data_loader1, loss_history, max_steps_per_epoch=None)
 from monai.inferers import SlidingWindowInferer
 img_num = 12
 overlap = 0.5
-inferer = SlidingWindowInferer(patch_size, img_num, overlap=overlap, mode ='constant')
+inferer = SlidingWindowInferer(PATCH_SIZE, img_num, overlap=overlap, mode ='constant')
 def diffusion_sampling(condition, model):
     sampled_images = diffusion.p_sample_loop(model,(condition.shape[0], 1,
                                                     condition.shape[2], condition.shape[3],condition.shape[4]),
@@ -459,7 +474,7 @@ def make_eval_diffusion(num_steps=10):
 
 def make_eval_inferer(overlap=0.0, sw_batch_size=32):
     return SlidingWindowInferer(
-        roi_size=patch_size,
+        roi_size=PATCH_SIZE,
         sw_batch_size=sw_batch_size,
         overlap=overlap,
         mode="constant",
@@ -483,12 +498,18 @@ def evaluate(model, epoch, out_dir, data_loader1, best_loss, save_outputs=False,
 
     t0 = time.time()
     with torch.no_grad(), torch.cuda.amp.autocast():
-        for i, (x1, y1) in enumerate(tqdm(data_loader1, total=min(len(data_loader1), max_batches),
+        for i, (x1, y1, mask1) in enumerate(tqdm(data_loader1, total=min(len(data_loader1), max_batches),
                                           desc=f"Eval {epoch}", leave=False)):
             target = y1.to(device)
             condition = x1.to(device)
+            mask = mask1.to(device)
             sampled = eval_inferer(condition, lambda c, m: diffusion_sampling_with(eval_diffusion, c, m), model)
-            loss = metric(sampled, target)
+
+            # Apply mask weighting to evaluation loss
+            mask_weight = 1.0 + 2.0 * mask  # 1.0 for background, 3.0 for anatomy
+            masked_loss = metric(sampled, target) * mask_weight
+            loss = masked_loss.mean()
+
             loss_all.append(loss.detach().cpu().numpy())
 
             if save_outputs:

@@ -7,6 +7,7 @@ import random, os, glob, argparse
 import SimpleITK as sitk
 import numpy as np
 from collections import defaultdict
+from preprocess_utils import preprocess_mri, preprocess_ct
 
 def preprocess_synthrad(synthrad_location, out_dir, seed, proportion):
     os.makedirs(out_dir, exist_ok=True)
@@ -48,21 +49,18 @@ def preprocess_synthrad(synthrad_location, out_dir, seed, proportion):
 
             mr = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(patient_path, "mr.mha"))).astype(np.float32)
             ct = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(patient_path, "ct.mha"))).astype(np.float32)
+            mask = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(patient_path, "mask.mha"))).astype(np.float32)
 
-            # MRI robust scale → [-1,1]
-            p_lo, p_hi = np.percentile(mr, [0.5, 99.5])
-            if p_hi <= p_lo:
-                mr = np.zeros_like(mr, dtype=np.float32)
-            else:
-                mr = np.clip(mr, p_lo, p_hi)
-                mr = 2.0 * (mr - p_lo) / (p_hi - p_lo) - 1.0
-
-            # CT HU clip [-1000,3000] → [-1,1]
-            ct = np.clip(ct, -1000.0, 3000.0)
-            ct = (ct + 1000.0) / 4000.0 * 2.0 - 1.0
+            # Use standardized preprocessing functions
+            mr = preprocess_mri(mr)
+            ct = preprocess_ct(ct)
+            # Mask doesn't need preprocessing - keep as binary 0/1
 
             out_path = os.path.join(subdir, f"{patient_code}.npz")
-            np.savez_compressed(out_path, image=mr.astype(np.float32), label=ct.astype(np.float32))
+            np.savez_compressed(out_path,
+                              image=mr.astype(np.float32),
+                              label=ct.astype(np.float32),
+                              mask=mask.astype(np.float32))
 
     handle_one("Tr", train); handle_one("Val", val); handle_one("Ts", test)
     print(f"Finished preprocessing. Saved NPZ pairs to {out_dir}")

@@ -30,6 +30,7 @@ import SimpleITK as sitk
 
 # Import configuration
 from config import *
+from preprocess_utils import load_and_preprocess_mha, postprocess_ct_output
 
 # Model + diffusion imports from this repo
 from diffusion.Create_diffusion import create_gaussian_diffusion
@@ -162,12 +163,19 @@ def main():
     if not input_path.exists():
         raise FileNotFoundError(f"Input file {input_path} not found")
     suffix = input_path.suffix.lower()
+
     if suffix == ".npz":
+        # NPZ files are already preprocessed
         vol_np, spacing, origin, direction = load_npz_volume(input_path)
     elif suffix in [".mha", ".mhd"]:
+        # MHA files need preprocessing - use standardized preprocessing
         vol_np, spacing, origin, direction = load_mha_volume(input_path)
+        # Apply MRI preprocessing to match training
+        from preprocess_utils import preprocess_mri
+        vol_np = preprocess_mri(vol_np)
     else:
         raise ValueError(f"Unsupported input format: {suffix}. Expected .npz or .mha/.mhd")
+
     vol_t = torch.from_numpy(vol_np).unsqueeze(0).unsqueeze(0).to(device)
 
     autocast_dtype = torch.float16 if args.fp16 and device.type == "cuda" else None
@@ -180,6 +188,10 @@ def main():
             pred = inferer(vol_t, lambda c, m: diffusion_sampling_with(eval_diffusion, c, m), model)
 
     ct_np = pred.squeeze(0).squeeze(0).detach().cpu().numpy()
+
+    # Postprocess CT output from [-1, 1] back to HU units
+    ct_np = postprocess_ct_output(ct_np)
+
     out_path = Path(args.output)
     ref_mha = Path(args.ref_mha) if args.ref_mha else None
     save_mha(ct_np, out_path, spacing=spacing, origin=origin, direction=direction, ref_mha=ref_mha)
