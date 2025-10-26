@@ -3,4 +3,6 @@
 *.npz
 
 # just for recollection/history
-!200_epochs.log
+!logs/
+!logs/200_epochs.log
+!logs/standardized_69_epochs.log
