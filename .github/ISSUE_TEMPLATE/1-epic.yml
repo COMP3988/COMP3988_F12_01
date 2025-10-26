@@ -1,0 +1,13 @@
+name: Epic
+description: Track a large feature
+title: "Epic: "
+labels: ["epic"]
+body:
+  - type: textarea
+    attributes:
+      label: Description
+      description: What is this epic about?
+  - type: textarea
+    attributes:
+      label: Stories
+      description: Link to related user stories here.

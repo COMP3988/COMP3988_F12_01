@@ -1,0 +1,17 @@
+name: User Story
+description: Define a feature from user perspective
+title: "Story: "
+labels: ["story"]
+body:
+  - type: textarea
+    attributes:
+      label: User Story
+      description: "As a [user], I want [goal], so that [reason]."
+  - type: textarea
+    attributes:
+      label: Acceptance Criteria
+      description: What conditions must be true for this to be done?
+  - type: textarea
+    attributes:
+      label: Subtasks
+      description: Checklist of subtasks or linked issues.
