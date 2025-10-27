@@ -201,12 +201,9 @@ class TransformerDiffusionAdapter:
             if len(mri_image.shape) == 5 and mri_image.shape[2] == 1:
                 generated_ct = generated_ct.squeeze(2)  # [B, 1, H, W]
 
-            # Postprocess CT output from [-1, 1] back to HU units
-            # Convert to numpy for postprocessing
-            generated_ct_np = generated_ct.detach().cpu().numpy()
-            generated_ct_np = postprocess_ct_output(generated_ct_np)
-            # Convert back to tensor
-            generated_ct = torch.from_numpy(generated_ct_np).to(self.device)
+            # DO NOT postprocess - keep output in [-1, 1] range to match ground truth
+            # Ground truth is also in [-1, 1] from the dataset preprocessing
+            # Postprocessing to HU units would cause SSIM/PSNR to be incorrectly calculated
 
         return generated_ct
 

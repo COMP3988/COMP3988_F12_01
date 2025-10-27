@@ -362,6 +362,7 @@ class SynthRADTestDataset(Dataset):
 class NPZTestDataset(Dataset):
     """
     A PyTorch Dataset for loading SynthRAD .npz files for testing.
+    Uses MONAI transforms to match test_ssim.py preprocessing.
 
     Args:
         data_folder (str): The path to the directory containing the SynthRAD .npz files.
@@ -374,6 +375,15 @@ class NPZTestDataset(Dataset):
             raise FileNotFoundError(f"No .npz files found in {data_folder}")
 
         print(f"Found {len(self.npz_files)} .npz files in {data_folder}")
+
+        # Match test_ssim.py preprocessing
+        from monai.transforms import Compose, EnsureChannelFirstd, ResizeWithPadOrCropd, EnsureTyped
+        img_size = (256, 256, 128)  # Match test_ssim.py
+        self.tx = Compose([
+            EnsureChannelFirstd(keys=["image","label"], channel_dim="no_channel"),
+            ResizeWithPadOrCropd(keys=["image","label"], spatial_size=img_size, constant_values=-1),
+            EnsureTyped(keys=["image","label"]),
+        ])
 
     def __len__(self):
         """Returns the total number of .npz files in the dataset."""
@@ -393,26 +403,15 @@ class NPZTestDataset(Dataset):
         npz_path = self.npz_files[idx]
 
         # Load the .npz file
-        data = np.load(npz_path)
+        with np.load(npz_path) as data:
+            mri = data['image'].astype(np.float32)  # MRI volume
+            ct = data['label'].astype(np.float32)   # CT volume
 
-        # Extract MRI and CT volumes
-        mri_volume = data['image'].astype(np.float32)  # MRI volume
-        ct_volume = data['label'].astype(np.float32)    # CT volume
+        # Apply MONAI transforms to match test_ssim.py preprocessing
+        out = self.tx({"image": mri, "label": ct})
 
         # Convert to tensors
-        mri_tensor = torch.from_numpy(mri_volume)
-        ct_tensor = torch.from_numpy(ct_volume)
-
-        # Add batch and channel dimensions if needed
-        if len(mri_tensor.shape) == 3:  # [D, H, W]
-            mri_tensor = mri_tensor.unsqueeze(0).unsqueeze(0)  # [1, 1, D, H, W]
-            ct_tensor = ct_tensor.unsqueeze(0).unsqueeze(0)    # [1, 1, D, H, W]
-        elif len(mri_tensor.shape) == 4:  # [B, D, H, W] or [C, D, H, W]
-            if mri_tensor.shape[0] == 1:  # Already has batch dimension
-                mri_tensor = mri_tensor.unsqueeze(1)  # [1, 1, D, H, W]
-                ct_tensor = ct_tensor.unsqueeze(1)    # [1, 1, D, H, W]
-            else:  # Has channel dimension
-                mri_tensor = mri_tensor.unsqueeze(0)  # [1, C, D, H, W]
-                ct_tensor = ct_tensor.unsqueeze(0)    # [1, C, D, H, W]
+        mri_tensor = out["image"].to(torch.float32)
+        ct_tensor = out["label"].to(torch.float32)
 
         return mri_tensor, ct_tensor
