@@ -1,74 +1,59 @@
 """
-MRI→CT inference script for the transformer-diffusion model.
-- Loads a trained checkpoint
-- Reads a single MRI volume from .npz or .mha/.mhd file
-- Runs sliding-window diffusion sampling
-- Writes CT prediction to .mha file, copying geometry from input or optional reference
-
-Usage examples:
-  python infer_single.py \
-    --ckpt synthRAD_checkpoints/Synth_A_to_B.pth \
-    --input SynthRAD/imagesTs/patient001.npz \
-    --output patient001_ct_pred.mha \
-    --steps 20 --overlap 0.25 --sw-batch 16
-
-Notes:
-- Input: Single .npz file (key: "image") or .mha/.mhd file
-- Output: Single .mha file with CT prediction
-- Uses sliding-window inference for large volumes
-- Input volumes should be preprocessed and normalized to [-1,1] range
+MRI→CT inference (single file, with optional mask).
+If --mask infer is used, automatically loads 'mask.mha' from the same folder as input.
 """
 
-import argparse
-import os
-from pathlib import Path
+import warnings
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
+warnings.filterwarnings("ignore", message="torch.meshgrid")
+warnings.filterwarnings("ignore", message="Using a non-tuple sequence for multidimensional indexing is deprecated")
 
+import argparse
+from pathlib import Path
 import numpy as np
 import torch
 from monai.inferers import SlidingWindowInferer
 import SimpleITK as sitk
 
-# Model + diffusion imports from this repo
+# Model + diffusion imports
 from diffusion.Create_diffusion import create_gaussian_diffusion
-from diffusion.resampler import UniformSampler  # not used directly but kept for parity
+from diffusion.resampler import UniformSampler
 from network.Diffusion_model_transformer import SwinVITModel
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="MRI→CT inference to .mha")
+    p = argparse.ArgumentParser(description="MRI→CT inference for a single file to .mha")
 
-    # required args
     p.add_argument("--ckpt", required=True, help="Path to model checkpoint (.pth)")
-    p.add_argument("--input", required=True, help="Path to a single .npz or .mha/.mhd file")
-    p.add_argument("--output", required=True, help="Output .mha file path")
+    p.add_argument("--input", required=True, help="Path to a .npz or .mha/.mhd file")
+    p.add_argument("--output", required=True, help="Output .mha filepath")
 
-    # recommended defaults / flags
+    p.add_argument("--mask", type=str, default=None,
+                   help="Optional .mha mask path, or 'infer' to auto-use mask.mha in input directory")
     p.add_argument("--steps", type=int, default=2, help="Diffusion steps at inference (timestep_respacing)")
-    p.add_argument("--overlap", type=float, default=0.50, help="Sliding-window overlap [0,1)")
-    p.add_argument("--sw-batch", type=int, default=8, help="Sliding-window batch size")
-    p.add_argument("--ref-mha", type=str, default=None, help="Optional reference .mha to copy geometry when .npz lacks metadata")
-    p.add_argument("--fp16", action="store_true", help="Enable autocast float16")
+    p.add_argument("--overlap", type=float, default=0.5, help="Sliding-window overlap [0,1)")
+    p.add_argument("--sw-batch", type=int, default=512, help="Sliding-window batch size")
+    p.add_argument("--ref-mha", type=str, default=None, help="Optional reference .mha to copy geometry")
+    p.add_argument("--fp16", action="store_true", help="Enable autocast float16 (CUDA)")
     p.add_argument("--device", default="cuda:0", help="Device, e.g., cuda:0 or cpu")
     return p.parse_args()
 
 
-# Hyperparameters copied from training script
-num_channels=64
-attention_resolutions="32,16,8"
+# ---------------- config (match training) ----------------
+num_channels = 64
+attention_resolutions = "32,16,8"
 channel_mult = (1, 2, 3, 4)
-num_heads=[4,4,8,16]
-window_size = [[4,4,2],[4,4,2],[4,4,2],[4,4,2]]
-num_res_blocks = [1,1,1,1]
-sample_kernel=([2,2,2],[2,2,1],[2,2,1],[2,2,1]),  # keep trailing comma to match training
+num_heads = [4, 4, 8, 16]
+window_size = [[4, 4, 2]] * 4
+num_res_blocks = [1] * 4
+sample_kernel = ([2, 2, 2], [2, 2, 1], [2, 2, 1], [2, 2, 1]),
 attention_ds = [int(x) for x in attention_resolutions.split(",")]
 
-# ---------------- config (match training) ----------------
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-img_size   = (256,256,128)
-patch_size = (64,64,2)
-patch_num  = 1
+img_size = (256, 256, 128)
+patch_size = (64, 64, 2)
+patch_num = 1
 
-# Diffusion hyperparams copied from training script
+# Diffusion hyperparams
 DIFFUSION_STEPS = 1000
 LEARN_SIGMA = True
 SIGMA_SMALL = False
@@ -79,9 +64,8 @@ RESCALE_TIMESTEPS = True
 RESCALE_LEARNED_SIGMAS = True
 
 
-def build_model(device: torch.device) -> torch.nn.Module:
-    attention_ds = [int(r) for r in attention_resolutions.split(",")]
-    model = SwinVITModel(
+def build_model(device):
+    return SwinVITModel(
         image_size=patch_size,
         in_channels=2,
         model_channels=num_channels,
@@ -92,7 +76,6 @@ def build_model(device: torch.device) -> torch.nn.Module:
         attention_resolutions=tuple(attention_ds),
         dropout=0,
         channel_mult=channel_mult,
-        num_classes=None,
         use_checkpoint=False,
         use_fp16=False,
         num_heads=num_heads,
@@ -103,10 +86,9 @@ def build_model(device: torch.device) -> torch.nn.Module:
         resblock_updown=False,
         use_new_attention_order=False,
     ).to(device)
-    return model
 
 
-def build_diffusion(steps: int):
+def build_diffusion(steps):
     return create_gaussian_diffusion(
         steps=DIFFUSION_STEPS,
         learn_sigma=LEARN_SIGMA,
@@ -116,12 +98,11 @@ def build_diffusion(steps: int):
         predict_xstart=PREDICT_XSTART,
         rescale_timesteps=RESCALE_TIMESTEPS,
         rescale_learned_sigmas=RESCALE_LEARNED_SIGMAS,
-        timestep_respacing=[steps],
+        timestep_respacing=str(steps),
     )
 
 
 def diffusion_sampling_with(diffusion_obj, condition, model):
-    # condition: (B,1,D,H,W) in [-1,1]
     return diffusion_obj.p_sample_loop(
         model,
         (condition.shape[0], 1, condition.shape[2], condition.shape[3], condition.shape[4]),
@@ -130,53 +111,71 @@ def diffusion_sampling_with(diffusion_obj, condition, model):
     )
 
 
-
-
-def load_npz_volume(npz_path: Path):
-    d = np.load(str(npz_path))
-    if "image" not in d:
-        raise KeyError(f"{npz_path} missing 'image' array")
-    vol = d["image"].astype(np.float32)  # expected shape (D,H,W) or (H,W,D)
-    # Optional geometry
-    spacing = tuple(d["spacing"]) if "spacing" in d else None
-    origin = tuple(d["origin"]) if "origin" in d else None
-    direction = tuple(d["direction"]) if "direction" in d else None
-    # Ensure (D,H,W)
-    if vol.ndim != 3:
-        raise ValueError(f"{npz_path} 'image' must be 3D, got shape {vol.shape}")
-    return vol, spacing, origin, direction
-
-
-# Load .mha or .mhd volume and metadata
-def load_mha_volume(mha_path: Path):
-    img = sitk.ReadImage(str(mha_path))
-    vol = sitk.GetArrayFromImage(img).astype(np.float32)  # (D,H,W)
-    spacing = img.GetSpacing()
-    origin = img.GetOrigin()
-    direction = img.GetDirection()
-    return vol, spacing, origin, direction
-
-
-def save_mha(volume_np: np.ndarray, out_path: Path, spacing=None, origin=None, direction=None, ref_mha: Path | None = None):
-    img = sitk.GetImageFromArray(volume_np.astype(np.float32))
-    if ref_mha is not None:
-        ref = sitk.ReadImage(str(ref_mha))
-        img.SetSpacing(ref.GetSpacing())
-        img.SetOrigin(ref.GetOrigin())
-        img.SetDirection(ref.GetDirection())
+def load_input(path: Path):
+    ext = path.suffix.lower()
+    if ext == ".npz":
+        d = np.load(str(path))
+        vol = d["image"].astype(np.float32)
+        spacing = tuple(d.get("spacing", ())) or None
+        origin = tuple(d.get("origin", ())) or None
+        direction = tuple(d.get("direction", ())) or None
+        return vol, spacing, origin, direction
+    elif ext in [".mha", ".mhd"]:
+        img = sitk.ReadImage(str(path))
+        vol = sitk.GetArrayFromImage(img).astype(np.float32)
+        return vol, img.GetSpacing(), img.GetOrigin(), img.GetDirection()
     else:
-        if spacing is not None:
-            img.SetSpacing(tuple(spacing))
-        if origin is not None:
-            img.SetOrigin(tuple(origin))
-        if direction is not None:
-            img.SetDirection(tuple(direction))
+        raise ValueError(f"Unsupported input type: {ext}")
+
+
+def save_mha(volume_dhw, out_path, spacing=None, origin=None, direction=None, ref_mha=None):
+    img = sitk.GetImageFromArray(volume_dhw.astype(np.float32))
+    if ref_mha:
+        ref = sitk.ReadImage(str(ref_mha))
+        img.CopyInformation(ref)
+    else:
+        if spacing: img.SetSpacing(spacing)
+        if origin: img.SetOrigin(origin)
+        if direction: img.SetDirection(direction)
     sitk.WriteImage(img, str(out_path))
 
 
 def main():
     args = parse_args()
     device = torch.device(args.device if torch.cuda.is_available() or "cpu" in args.device else "cpu")
+    cuda_available = torch.cuda.is_available()
+
+    # --- Parameter summary ---
+    print("\n===== Inference Configuration =====")
+    print(f"Device:              {device}")
+    print(f"CUDA available:      {cuda_available}")
+    print(f"Checkpoint:          {args.ckpt}")
+    print(f"Input file:          {args.input}")
+    print(f"Output file:         {args.output}")
+    print(f"Mask:                {args.mask}")
+    print(f"Steps:               {args.steps}")
+    print(f"Sliding-window batch:{args.sw_batch}")
+    print(f"Overlap:             {args.overlap}")
+    print(f"Reference .mha:      {args.ref_mha}")
+    print(f"FP16 enabled:        {args.fp16}")
+    print("===================================\n")
+
+    in_path = Path(args.input)
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Auto-detect mask if --mask infer
+    mask_path = None
+    if args.mask:
+        if args.mask.lower() == "infer":
+            candidate = in_path.parent / "mask.mha"
+            if candidate.exists():
+                mask_path = candidate
+                print(f"Auto-detected mask: {mask_path}")
+            else:
+                print(f"Warning: --mask infer set but no mask.mha found in {in_path.parent}")
+        else:
+            mask_path = Path(args.mask)
 
     # Build model
     model = build_model(device)
@@ -184,6 +183,8 @@ def main():
     state = ckpt.get("state_dict", ckpt)
     model.load_state_dict(state, strict=False)
     model.eval()
+    torch.backends.cudnn.benchmark = True
+    torch.set_float32_matmul_precision("high")
 
     # Diffusion + inferer
     eval_diffusion = build_diffusion(args.steps)
@@ -191,36 +192,50 @@ def main():
         roi_size=patch_size,
         sw_batch_size=args.sw_batch,
         overlap=args.overlap,
-        mode="constant",
+        mode="gaussian",
+        sigma_scale=0.125,
+        padding_mode="constant",
+        cval=-1,
     )
 
-    # Single file input
-    input_path = Path(args.input)
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input file {input_path} not found")
-    suffix = input_path.suffix.lower()
-    if suffix == ".npz":
-        vol_np, spacing, origin, direction = load_npz_volume(input_path)
-    elif suffix in [".mha", ".mhd"]:
-        vol_np, spacing, origin, direction = load_mha_volume(input_path)
-    else:
-        raise ValueError(f"Unsupported input format: {suffix}. Expected .npz or .mha/.mhd")
-    vol_t = torch.from_numpy(vol_np).unsqueeze(0).unsqueeze(0).to(device)
+    # Load input
+    vol_np, spacing, origin, direction = load_input(in_path)
 
-    autocast_dtype = torch.float16 if args.fp16 and device.type == "cuda" else None
+    # Load mask if available
+    mask_np = None
+    if mask_path:
+        mask_img = sitk.ReadImage(str(mask_path))
+        mask_np = sitk.GetArrayFromImage(mask_img).astype(np.float32)
+        if mask_np.shape != vol_np.shape:
+            raise ValueError(f"Mask shape {mask_np.shape} does not match input shape {vol_np.shape}")
+        mask_np = (mask_np > 0.5).astype(np.float32)
 
+    # Prepare tensor
+    vol_hwd = np.moveaxis(vol_np, 0, -1)
+    vol_t = torch.from_numpy(vol_hwd).unsqueeze(0).unsqueeze(0).to(device)
+
+    # Inference
     with torch.no_grad():
-        if autocast_dtype is not None:
-            with torch.cuda.amp.autocast(dtype=autocast_dtype):
+        if args.fp16 and device.type == "cuda":
+            with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                 pred = inferer(vol_t, lambda c, m: diffusion_sampling_with(eval_diffusion, c, m), model)
         else:
             pred = inferer(vol_t, lambda c, m: diffusion_sampling_with(eval_diffusion, c, m), model)
 
-    ct_np = pred.squeeze(0).squeeze(0).detach().cpu().numpy()
-    out_path = Path(args.output)
-    ref_mha = Path(args.ref_mha) if args.ref_mha else None
-    save_mha(ct_np, out_path, spacing=spacing, origin=origin, direction=direction, ref_mha=ref_mha)
-    print(f"Wrote {out_path}")
+    # Convert and mask
+    ct_hwd = pred.squeeze(0).squeeze(0).cpu().numpy()
+    ct_dhw = np.moveaxis(ct_hwd, -1, 0).astype(np.float32)
+
+    if mask_np is not None:
+        ct_dhw = ct_dhw * mask_np + (-1.0) * (1.0 - mask_np)
+
+    # Map [-1,1] → [-1000,1000] HU
+    ct_proc = np.clip(ct_dhw, -1, 1)
+    ct_proc = (ct_proc + 1) / 2 * 2000 - 1000
+    ct_proc = ct_proc * 0.5 - 200   # halves contrast, darker base
+
+    save_mha(ct_proc, out_path, spacing, origin, direction, args.ref_mha)
+    print("Saved:", out_path)
 
 
 if __name__ == "__main__":
