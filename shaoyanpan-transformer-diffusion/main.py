@@ -184,7 +184,7 @@ class CustomDataset(Dataset):
             label_tensor = out["label"].to(torch.float)
         else:
             outs = self.train_transforms(sample)   # list of dicts (num_samples)
-            img   = np.zeros([patch_num, patch_size[0], patch_size[1], patch_size[2]], dtype=np.float32)
+            img   = np.zeros([PATCH_NUM, PATCH_SIZE[0], PATCH_SIZE[1], PATCH_SIZE[2]], dtype=np.float32)
             label = np.zeros_like(img)
             for i, s in enumerate(outs):
                 img[i]   = s["image"]
@@ -247,7 +247,7 @@ class CustomDataset(Dataset):
 # #                           constant_values = -1,
 # #                     ),
 #                     RandSpatialCropSamplesd(keys=["image","label"],
-#                                       roi_size = patch_size,
+#                                       roi_size = PATCH_SIZE,
 #                                       num_samples = patch_num,
 #                                       random_size=False,
 #                                       ),
@@ -298,8 +298,8 @@ class CustomDataset(Dataset):
 #             label_tensor = affined_data_dict['label'].to(torch.float)
 #         else:
 #             affined_data_dict = self.train_transforms(cao)
-#             img = np.zeros([patch_num, patch_size[0], patch_size[1], patch_size[2]])
-#             label = np.zeros([patch_num, patch_size[0], patch_size[1], patch_size[2]])
+#             img = np.zeros([patch_num, PATCH_SIZE[0], PATCH_SIZE[1], PATCH_SIZE[2]])
+#             label = np.zeros([patch_num, PATCH_SIZE[0], PATCH_SIZE[1], PATCH_SIZE[2]])
 #             for i,after_l in enumerate(affined_data_dict):
 #                 img[i,:,:,:] = after_l['image']
 #                 label[i,:,:,:] = after_l['label']
@@ -401,7 +401,7 @@ def train(model, optimizer,data_loader1, loss_history, max_steps_per_epoch=None)
         #4: Optimize the TDM network
 
         optimizer.zero_grad()
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast("cuda"):
             all_loss = diffusion.training_losses(A_to_B_model,traintarget,traincondition, t)
             A_to_B_loss = (all_loss["loss"] * weights).mean()
 
@@ -431,14 +431,14 @@ def train(model, optimizer,data_loader1, loss_history, max_steps_per_epoch=None)
 # For example, if your whole volume is 64x64x64, and our window size is 64x64x4, so the function will automatically sliding down
 # the whole volume with a certain overlapping ratio
 
-# The window size (patch_size) is shown in the "Build the data loader using the monai library" section.
-# patch_size: the size of sliding window
+# The window size (PATCH_SIZE) is shown in the "Build the data loader using the monai library" section.
+# PATCH_SIZE: the size of sliding window
 # img_num: the number of sliding window in each process, only related to your gpu memory, it will still run through the whole volume
 # overlap: the overlapping ratio
 from monai.inferers import SlidingWindowInferer
 img_num = 12
 overlap = 0.5
-inferer = SlidingWindowInferer(patch_size, img_num, overlap=overlap, mode ='constant')
+inferer = SlidingWindowInferer(PATCH_SIZE, img_num, overlap=overlap, mode ='constant')
 def diffusion_sampling(condition, model):
     sampled_images = diffusion.p_sample_loop(model,(condition.shape[0], 1,
                                                     condition.shape[2], condition.shape[3],condition.shape[4]),
@@ -461,7 +461,7 @@ def make_eval_diffusion(num_steps=10):
 
 def make_eval_inferer(overlap=0.0, sw_batch_size=32):
     return SlidingWindowInferer(
-        roi_size=patch_size,
+        roi_size=PATCH_SIZE,
         sw_batch_size=sw_batch_size,
         overlap=overlap,
         mode="constant",
@@ -545,7 +545,7 @@ best_loss = float('inf')
 train_loss_history, test_loss_history = [], []
 
 # Uncomment this when you resume the checkpoint
-A_to_B_model.load_state_dict(torch.load(A_to_B_PATH),strict=False)
+# A_to_B_model.load_state_dict(torch.load(A_to_B_PATH),strict=False)
 for epoch in range(0, N_EPOCHS):
     print('Epoch:', epoch)
     start_time = time.time()
