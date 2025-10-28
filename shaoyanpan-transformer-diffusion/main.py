@@ -23,6 +23,8 @@ parser.add_argument("--epochs", type=int, default=20,
                     help="Number of epochs to train")
 args = parser.parse_args()
 
+from config import *
+
 # ^^^ MANUALLY ADDED ^^^
 
 import PIL
@@ -130,14 +132,10 @@ from diffusion.resampler import *
 
 # # Build the data loader using the monai library
 
-# Here are the dataloader hyper-parameters, including the batch size,
-# image size, image spacing (don't forget to adjust the spacing to your desired number)
-BATCH_SIZE_TRAIN = 4*1
-img_size = (256,256,128)
-patch_size = (64,64,2)
-spacing = (2,2,2)
-patch_num = 1
-channels = 1
+# Import configuration
+from config import *
+
+# Metric for training
 metric = torch.nn.L1Loss()
 
 # # Data processing for .npz files (contain {'image', 'label'})
@@ -159,13 +157,13 @@ class CustomDataset(Dataset):
 
         self.train_transforms = Compose([
             EnsureChannelFirstd(keys=["image","label"], channel_dim="no_channel"),
-            ResizeWithPadOrCropd(keys=["image","label"], spatial_size=img_size, constant_values=-1),
-            RandSpatialCropSamplesd(keys=["image","label"], roi_size=patch_size, num_samples=patch_num, random_size=False),
+            ResizeWithPadOrCropd(keys=["image","label"], spatial_size=IMG_SIZE, constant_values=-1),
+            RandSpatialCropSamplesd(keys=["image","label"], roi_size=PATCH_SIZE, num_samples=PATCH_NUM, random_size=False),
             EnsureTyped(keys=["image","label"]),
         ])
         self.test_transforms = Compose([
             EnsureChannelFirstd(keys=["image","label"], channel_dim="no_channel"),
-            ResizeWithPadOrCropd(keys=["image","label"], spatial_size=img_size, constant_values=-1),
+            ResizeWithPadOrCropd(keys=["image","label"], spatial_size=IMG_SIZE, constant_values=-1),
             EnsureTyped(keys=["image","label"]),
         ])
 
@@ -316,19 +314,19 @@ class CustomDataset(Dataset):
 
 # These three parameters: training steps number, learning variance or not (using improved DDPM or original DDPM), and inference
 # timesteps number (only effective when using improved DDPM)
-diffusion_steps=1000
-learn_sigma=True
-timestep_respacing=[50]
+diffusion_steps = DIFFUSION_STEPS
+learn_sigma = LEARN_SIGMA
+timestep_respacing = TIMESTEP_RESPACING
 
-# Don't toch these parameters, they are irrelant to the image synthesis
-sigma_small=False
-class_cond=False
-noise_schedule='linear'
-use_kl=False
-predict_xstart=True
-rescale_timesteps=True
-rescale_learned_sigmas=True
-use_checkpoint=False
+# Don't touch these parameters, they are irrelevant to the image synthesis
+sigma_small = SIGMA_SMALL
+class_cond = CLASS_COND
+noise_schedule = NOISE_SCHEDULE
+use_kl = USE_KL
+predict_xstart = PREDICT_XSTART
+rescale_timesteps = RESCALE_TIMESTEPS
+rescale_learned_sigmas = RESCALE_LEARNED_SIGMAS
+use_checkpoint = USE_CHECKPOINT
 
 
 diffusion = create_gaussian_diffusion(
@@ -354,55 +352,18 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # attention_resulution means we use the transformer blocks in the third to the sixth block
 # number of heads, window size in each transformer block
 #
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = get_device()
 print(device)
 
-num_channels=64
-attention_resolutions="32,16,8"
-channel_mult = (1, 2, 3, 4)
-num_heads=[4,4,8,16]
-window_size = [[4,4,2],[4,4,2],[4,4,2],[4,4,2]]
-num_res_blocks = [1,1,1,1]
-sample_kernel=([2,2,2],[2,2,1],[2,2,1],[2,2,1]),
-
-attention_ds = []
-for res in attention_resolutions.split(","):
-    attention_ds.append(int(res))
-class_cond = False
-use_scale_shift_norm=True
-resblock_updown = False
-dropout = 0
-
 from network.Diffusion_model_transformer import *
-A_to_B_model = SwinVITModel(
-          image_size=patch_size,
-          in_channels=2,
-          model_channels=num_channels,
-          out_channels=2,
-          dims=3,
-          sample_kernel = sample_kernel,
-          num_res_blocks=num_res_blocks,
-          attention_resolutions=tuple(attention_ds),
-          dropout=dropout,
-          channel_mult=channel_mult,
-          num_classes=None,
-          use_checkpoint=False,
-          use_fp16=False,
-          num_heads=num_heads,
-          window_size = window_size,
-          num_head_channels=64,
-          num_heads_upsample=-1,
-          use_scale_shift_norm=use_scale_shift_norm,
-          resblock_updown=resblock_updown,
-          use_new_attention_order=False,
-      ).to(device)
+A_to_B_model = SwinVITModel(**get_model_config()).to(device)
 
 
 pytorch_total_params = sum(p.numel() for p in A_to_B_model.parameters())
 print('parameter number is '+str(pytorch_total_params))
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision("high")
-optimizer = torch.optim.AdamW(A_to_B_model.parameters(), lr=2e-5,weight_decay = 1e-4)
+optimizer = torch.optim.AdamW(A_to_B_model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 scaler = torch.cuda.amp.GradScaler()
 
 # Build the training function - runs one epoch
@@ -428,9 +389,9 @@ def train(model, optimizer,data_loader1, loss_history, max_steps_per_epoch=None)
         if i % 5 == 0 and A_to_B_loss_sum:
             pbar.set_postfix(avg_loss=float(np.nanmean(A_to_B_loss_sum)))
 
-        traintarget = y1.view(-1,1,patch_size[0],patch_size[1],patch_size[2]).to(device)
+        traintarget = y1.view(-1,1,PATCH_SIZE[0],PATCH_SIZE[1],PATCH_SIZE[2]).to(device)
 
-        traincondition = x1.view(-1,1,patch_size[0],patch_size[1],patch_size[2]).to(device)
+        traincondition = x1.view(-1,1,PATCH_SIZE[0],PATCH_SIZE[1],PATCH_SIZE[2]).to(device)
 
         #3: extract random timestep for training
         t, weights = schedule_sampler.sample(traincondition.shape[0], device)
@@ -593,7 +554,7 @@ for epoch in range(0, N_EPOCHS):
     if epoch % 5 == 0:
         print("Starting eval...")
         average_loss = evaluate(A_to_B_model, epoch, checkpoint_dir, test_loader1, best_loss,
-                save_outputs=False, max_batches=1, eval_steps=10, eval_overlap=0.0, eval_sw_batch=32)
+                save_outputs=False, max_batches=1, eval_steps=EVAL_STEPS, eval_overlap=EVAL_OVERLAP, eval_sw_batch=EVAL_SW_BATCH)
         print("Eval done.")
         if average_loss < best_loss:
             print('Save the latest best model')

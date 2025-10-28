@@ -54,3 +54,4 @@ checkpoints
 *.zip
 synthRAD2025_Task1_Train/
 synthRAD2025_Task2_Train/
+SynthRAD_standardized/
