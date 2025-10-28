@@ -180,6 +180,13 @@ def main():
             pred = inferer(vol_t, lambda c, m: diffusion_sampling_with(eval_diffusion, c, m), model)
 
     ct_np = pred.squeeze(0).squeeze(0).detach().cpu().numpy()
+
+    # Reduce intensity to make outputs dimmer
+    # Scale down by a factor to reduce brightness/intensity
+    intensity_scale = 0.3  # Adjust this value to control dimness (0.0 to 1.0)
+    ct_np = ct_np * intensity_scale
+    ct_np = np.clip(ct_np, -1.0, 1.0)  # Keep within valid range
+
     out_path = Path(args.output)
     ref_mha = Path(args.ref_mha) if args.ref_mha else None
     save_mha(ct_np, out_path, spacing=spacing, origin=origin, direction=direction, ref_mha=ref_mha)
