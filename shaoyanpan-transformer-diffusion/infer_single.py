@@ -159,8 +159,7 @@ def main():
         overlap=args.overlap,
         mode="gaussian",
         sigma_scale=0.125,
-        padding_mode="constant",
-        cval=-1,
+        padding_mode="replicate"
     )
 
     # Load input
@@ -193,18 +192,30 @@ def main():
     inference_time = inference_end - inference_start
     print(f"Inference completed in {inference_time:.2f} seconds ({inference_time/60:.2f} minutes)")
 
-    # Convert and mask
+    # D,H,W float32
     ct_hwd = pred.squeeze(0).squeeze(0).cpu().numpy()
     ct_dhw = np.moveaxis(ct_hwd, -1, 0).astype(np.float32)
 
-    if mask_np is not None:
-        ct_dhw = ct_dhw * mask_np + (-1.0) * (1.0 - mask_np)
+    # signed invert/scale, bias-correct, clip to [-1,1]
+    s = -0.7
+    x = np.clip(s * ct_dhw, -1, 1)
+    bias = ndi.gaussian_filter(x, sigma=20)
+    x = np.clip(x - (bias - bias.mean()), -1, 1)
 
-    x = -ct_dhw                                # invert
-    x = np.clip(x, -1, 1)                      # clip to valid range
-    bias = ndi.gaussian_filter(x, sigma=20)    # low-frequency bias removal to remove patching
-    x = x - (bias - bias.mean())
-    ct_proc = (x + 1) / 2 * 2000 - 1000        # maps [-1,1] → [-1000,1000]
+    # map to HU
+    ct_proc = (x + 1) / 2 * 2000 - 1000  # float32 HU
+
+    # enforce outside-body = -1000 HU
+    if mask_np is not None:
+        ct_proc[mask_np == 0] = -1000
+    else:
+        m = (vol_np > np.percentile(vol_np, 10)).astype(np.uint8)  # same D,H,W
+        # optional: smooth mask to avoid jagged rim
+        # m = ndi.binary_closing(m, iterations=2)
+        ct_proc[m == 0] = -1000
+
+    # final clip and cast for viewers
+    ct_proc = np.clip(ct_proc, -1024, 3071).astype(np.int16)
 
     save_mha(ct_proc, out_path, spacing, origin, direction, args.ref_mha)
 
