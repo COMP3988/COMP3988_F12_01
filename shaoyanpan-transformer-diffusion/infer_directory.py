@@ -59,6 +59,7 @@ def main():
             "--ckpt", args.ckpt,
             "--input", infile,
             "--output", str(outfile),
+            "--mask", "infer",
             "--steps", str(args.steps),
             "--overlap", str(args.overlap),
             "--sw-batch", str(args.sw_batch),
