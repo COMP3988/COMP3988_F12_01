@@ -16,6 +16,7 @@ import time
 import torch
 from monai.inferers import SlidingWindowInferer
 import SimpleITK as sitk
+import scipy.ndimage as ndi
 
 # Import configuration
 from config import *
@@ -199,10 +200,11 @@ def main():
     if mask_np is not None:
         ct_dhw = ct_dhw * mask_np + (-1.0) * (1.0 - mask_np)
 
-    # Map [-1,1] → [-1000,1000] HU
-    ct_proc = np.clip(ct_dhw, -1, 1)
-    ct_proc = (ct_proc + 1) / 2 * 2000 - 1000
-    ct_proc = ct_proc * 0.5 - 200   # halves contrast, darker base
+    x = -ct_dhw                                # invert
+    x = np.clip(x, -1, 1)                      # clip to valid range
+    bias = ndi.gaussian_filter(x, sigma=20)    # low-frequency bias removal to remove patching
+    x = x - (bias - bias.mean())
+    ct_proc = (x + 1) / 2 * 2000 - 1000        # maps [-1,1] → [-1000,1000]
 
     save_mha(ct_proc, out_path, spacing, origin, direction, args.ref_mha)
 
