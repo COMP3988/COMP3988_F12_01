@@ -1,0 +1,22 @@
+name: synthrad-l4
+channels: [pytorch, nvidia, conda-forge]
+dependencies:
+  - python=3.10
+  - pytorch=2.2.2
+  - torchvision=0.17.2
+  - torchaudio=2.2.2
+  - numpy
+  - scipy
+  - scikit-image
+  - matplotlib
+  - pillow
+  - natsort
+  - simpleitk
+  - pip
+  - pip:
+      - einops==0.7.0
+      - timm==0.9.16
+      - monai==1.3.2
+      - torchsummary==1.5.1
+      - tqdm==4.66.4
+      - "napari[all]"

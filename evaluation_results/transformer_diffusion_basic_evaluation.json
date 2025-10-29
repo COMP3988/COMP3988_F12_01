@@ -1,0 +1,21 @@
+{
+  "model_name": "transformer_diffusion",
+  "weights_path": "shaoyanpan-transformer-diffusion/200_epoch_ckpt/Synth_A_to_B.pth",
+  "data_folder": "synthRAD2025_Task1_Train/Task1/AB",
+  "enhanced_metrics": true,
+  "results": [
+    {
+      "ssim": 0.7534095869109205,
+      "psnr": 18.147687789658768,
+      "mae": "0.06022594"
+    }
+  ],
+  "summary": {
+    "ssim_mean": 0.7534095869109205,
+    "ssim_std": 0.0,
+    "psnr_mean": 18.147687789658768,
+    "psnr_std": 0.0,
+    "mae_mean": "0.06022594",
+    "mae_std": "0.0"
+  }
+}
