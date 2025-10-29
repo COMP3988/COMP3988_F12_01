@@ -7,13 +7,18 @@ import warnings
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 warnings.filterwarnings("ignore", message="torch.meshgrid")
 warnings.filterwarnings("ignore", message="Using a non-tuple sequence for multidimensional indexing is deprecated")
+warnings.filterwarnings("ignore", message="Importing from timm.models.layers is deprecated")
 
 import argparse
 from pathlib import Path
 import numpy as np
+import time
 import torch
 from monai.inferers import SlidingWindowInferer
 import SimpleITK as sitk
+
+# Import configuration
+from config import *
 
 # Model + diffusion imports
 from diffusion.Create_diffusion import create_gaussian_diffusion
@@ -28,78 +33,27 @@ def parse_args():
     p.add_argument("--input", required=True, help="Path to a .npz or .mha/.mhd file")
     p.add_argument("--output", required=True, help="Output .mha filepath")
 
-    p.add_argument("--mask", type=str, default=None,
+    p.add_argument("--mask", type=str, default="infer",
                    help="Optional .mha mask path, or 'infer' to auto-use mask.mha in input directory")
-    p.add_argument("--steps", type=int, default=2, help="Diffusion steps at inference (timestep_respacing)")
-    p.add_argument("--overlap", type=float, default=0.5, help="Sliding-window overlap [0,1)")
-    p.add_argument("--sw-batch", type=int, default=512, help="Sliding-window batch size")
+    p.add_argument("--steps", type=int, default=DEFAULT_INFERENCE_STEPS, help="Diffusion steps at inference (timestep_respacing)")
+    p.add_argument("--overlap", type=float, default=DEFAULT_OVERLAP, help="Sliding-window overlap [0,1)")
+    p.add_argument("--sw-batch", type=int, default=DEFAULT_SW_BATCH, help="Sliding-window batch size")
     p.add_argument("--ref-mha", type=str, default=None, help="Optional reference .mha to copy geometry")
     p.add_argument("--fp16", action="store_true", help="Enable autocast float16 (CUDA)")
     p.add_argument("--device", default="cuda:0", help="Device, e.g., cuda:0 or cpu")
     return p.parse_args()
 
 
-# ---------------- config (match training) ----------------
-num_channels = 64
-attention_resolutions = "32,16,8"
-channel_mult = (1, 2, 3, 4)
-num_heads = [4, 4, 8, 16]
-window_size = [[4, 4, 2]] * 4
-num_res_blocks = [1] * 4
-sample_kernel = ([2, 2, 2], [2, 2, 1], [2, 2, 1], [2, 2, 1]),
-attention_ds = [int(x) for x in attention_resolutions.split(",")]
-
-img_size = (256, 256, 128)
-patch_size = (64, 64, 2)
-patch_num = 1
-
-# Diffusion hyperparams
-DIFFUSION_STEPS = 1000
-LEARN_SIGMA = True
-SIGMA_SMALL = False
-NOISE_SCHEDULE = "linear"
-USE_KL = False
-PREDICT_XSTART = True
-RESCALE_TIMESTEPS = True
-RESCALE_LEARNED_SIGMAS = True
-
+# ---------------- config (imported from config.py) ----------------
 
 def build_model(device):
-    return SwinVITModel(
-        image_size=patch_size,
-        in_channels=2,
-        model_channels=num_channels,
-        out_channels=2,
-        dims=3,
-        sample_kernel=sample_kernel,
-        num_res_blocks=num_res_blocks,
-        attention_resolutions=tuple(attention_ds),
-        dropout=0,
-        channel_mult=channel_mult,
-        use_checkpoint=False,
-        use_fp16=False,
-        num_heads=num_heads,
-        window_size=window_size,
-        num_head_channels=64,
-        num_heads_upsample=-1,
-        use_scale_shift_norm=True,
-        resblock_updown=False,
-        use_new_attention_order=False,
-    ).to(device)
+    return SwinVITModel(**get_model_config()).to(device)
 
 
 def build_diffusion(steps):
-    return create_gaussian_diffusion(
-        steps=DIFFUSION_STEPS,
-        learn_sigma=LEARN_SIGMA,
-        sigma_small=SIGMA_SMALL,
-        noise_schedule=NOISE_SCHEDULE,
-        use_kl=USE_KL,
-        predict_xstart=PREDICT_XSTART,
-        rescale_timesteps=RESCALE_TIMESTEPS,
-        rescale_learned_sigmas=RESCALE_LEARNED_SIGMAS,
-        timestep_respacing=str(steps),
-    )
+    config = get_diffusion_config()
+    config['timestep_respacing'] = [steps]
+    return create_gaussian_diffusion(**config)
 
 
 def diffusion_sampling_with(diffusion_obj, condition, model):
@@ -141,24 +95,10 @@ def save_mha(volume_dhw, out_path, spacing=None, origin=None, direction=None, re
 
 
 def main():
+    start_time = time.time()
     args = parse_args()
     device = torch.device(args.device if torch.cuda.is_available() or "cpu" in args.device else "cpu")
     cuda_available = torch.cuda.is_available()
-
-    # --- Parameter summary ---
-    print("\n===== Inference Configuration =====")
-    print(f"Device:              {device}")
-    print(f"CUDA available:      {cuda_available}")
-    print(f"Checkpoint:          {args.ckpt}")
-    print(f"Input file:          {args.input}")
-    print(f"Output file:         {args.output}")
-    print(f"Mask:                {args.mask}")
-    print(f"Steps:               {args.steps}")
-    print(f"Sliding-window batch:{args.sw_batch}")
-    print(f"Overlap:             {args.overlap}")
-    print(f"Reference .mha:      {args.ref_mha}")
-    print(f"FP16 enabled:        {args.fp16}")
-    print("===================================\n")
 
     in_path = Path(args.input)
     out_path = Path(args.output)
@@ -166,16 +106,33 @@ def main():
 
     # Auto-detect mask if --mask infer
     mask_path = None
+    mask_status = "None"
     if args.mask:
         if args.mask.lower() == "infer":
             candidate = in_path.parent / "mask.mha"
             if candidate.exists():
                 mask_path = candidate
-                print(f"Auto-detected mask: {mask_path}")
+                mask_status = f"Auto-detected: {mask_path}"
             else:
-                print(f"Warning: --mask infer set but no mask.mha found in {in_path.parent}")
+                mask_status = f"⚠ 'infer' set but mask.mha not found in {in_path.parent}"
         else:
             mask_path = Path(args.mask)
+            mask_status = str(mask_path)
+
+    # --- Parameter summary ---
+    print("\n===== Inference Configuration =====")
+    print(f"Device:                {device}")
+    print(f"CUDA available:        {cuda_available}")
+    print(f"Checkpoint:            {args.ckpt}")
+    print(f"Input file:            {args.input}")
+    print(f"Output file:           {args.output}")
+    print(f"Mask:                  {mask_status}")
+    print(f"Steps:                 {args.steps}")
+    print(f"Sliding-window batch:  {args.sw_batch}")
+    print(f"Overlap:               {args.overlap}")
+    print(f"Reference .mha:        {args.ref_mha}")
+    print(f"FP16 enabled:          {args.fp16}")
+    print("===================================\n")
 
     # Build model
     model = build_model(device)
@@ -184,12 +141,19 @@ def main():
     model.load_state_dict(state, strict=False)
     model.eval()
     torch.backends.cudnn.benchmark = True
-    torch.set_float32_matmul_precision("high")
+
+    # Use new PyTorch 2.9+ API for TF32 precision control
+    if hasattr(torch.backends.cuda.matmul, 'fp32_precision'):
+        # New API (PyTorch 2.9+)
+        torch.backends.cuda.matmul.fp32_precision = 'tf32'
+    else:
+        # Fallback to old API for older PyTorch versions
+        torch.set_float32_matmul_precision("high")
 
     # Diffusion + inferer
     eval_diffusion = build_diffusion(args.steps)
     inferer = SlidingWindowInferer(
-        roi_size=patch_size,
+        roi_size=PATCH_SIZE,
         sw_batch_size=args.sw_batch,
         overlap=args.overlap,
         mode="gaussian",
@@ -215,12 +179,18 @@ def main():
     vol_t = torch.from_numpy(vol_hwd).unsqueeze(0).unsqueeze(0).to(device)
 
     # Inference
+    print("Starting inference...")
+    inference_start = time.time()
     with torch.no_grad():
         if args.fp16 and device.type == "cuda":
             with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                 pred = inferer(vol_t, lambda c, m: diffusion_sampling_with(eval_diffusion, c, m), model)
         else:
             pred = inferer(vol_t, lambda c, m: diffusion_sampling_with(eval_diffusion, c, m), model)
+
+    inference_end = time.time()
+    inference_time = inference_end - inference_start
+    print(f"Inference completed in {inference_time:.2f} seconds ({inference_time/60:.2f} minutes)")
 
     # Convert and mask
     ct_hwd = pred.squeeze(0).squeeze(0).cpu().numpy()
@@ -235,7 +205,15 @@ def main():
     ct_proc = ct_proc * 0.5 - 200   # halves contrast, darker base
 
     save_mha(ct_proc, out_path, spacing, origin, direction, args.ref_mha)
-    print("Saved:", out_path)
+
+    # Final timing summary
+    total_time = time.time() - start_time
+    print("\n===== Timing Summary =====")
+    print(f"Inference time:  {inference_time:.2f}s ({inference_time/60:.2f} min)")
+    print(f"Total time:      {total_time:.2f}s ({total_time/60:.2f} min)")
+    print(f"Overhead:        {total_time - inference_time:.2f}s")
+    print("==========================")
+    print(f"\nSaved: {out_path}")
 
 
 if __name__ == "__main__":

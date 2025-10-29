@@ -64,7 +64,7 @@ USE_NEW_ATTENTION_ORDER = False
 # Default inference parameters
 DEFAULT_INFERENCE_STEPS = 2
 DEFAULT_OVERLAP = 0.50
-DEFAULT_SW_BATCH = 8
+DEFAULT_SW_BATCH = 512
 
 # =============================================================================
 # EVALUATION HYPERPARAMETERS
